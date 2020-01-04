@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include "zmalloc.h"
 
 //由于malloc函数申请的内存不会标识内存块的大小，
 //而我们需要统计内存大小，所以需要在多申请PREFIX_SIZE
@@ -104,6 +105,37 @@ void *zcalloc(size_t size){
     update_zmalloc_stat_alloc(size+PREFIX_SIZE);
     //去除数据头,返回sdshdr结构体部分
     return (char*)ptr+PREFIX_SIZE;
+}
+
+/**
+ * 重新分配内存大小
+ */
+void *zrealloc(void *ptr,size_t size){
+    
+    void *realptr;
+    size_t oldsize;
+    void *newptr;
+
+    //原地址不存在,直接申请空间
+    if (ptr == NULL) return zmalloc(size);
+
+    //真实起始地址
+    realptr = (char*)ptr-PREFIX_SIZE;
+    //获取sdshdr结构体的大小
+    oldsize = *((size_t*)realptr);
+    //新的起始地址
+    newptr = realloc(realptr,size+PREFIX_SIZE);
+    //内存不足,抛出异常
+    if(!newptr) zmalloc_oom_handler(size);
+    //存储size
+    *((size_t*)newptr) = size;
+
+    //内存用量统计,减旧size,增新size
+    update_zmalloc_stat_free(oldsize);
+    update_zmalloc_stat_alloc(size);
+
+    //去除数据头,返回sdshdr结构体部分
+    return (char*)newptr+PREFIX_SIZE;
 }
 
 /**
