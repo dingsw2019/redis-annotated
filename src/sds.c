@@ -177,11 +177,69 @@ sds sdscat(sds s,const char *t){
     return sdscatlen(s,t,strlen(t));
 }
 
+/**
+ * 将字符串 t 的前 len 个字符复制到 s 中,
+ * 并在字符串最后添加终结符
+ * 
+ * 如果 sds 的长度少于 len 个字符，那么扩展 sds
+ * 
+ * 复杂度
+ * T = O(N)
+ * 
+ * 返回值
+ * 成功：新的 sds
+ * 失败：NULL
+ */
+sds sdscpylen(sds s,const char *t,size_t len){
+    
+    struct sdshdr *sh = (void*)(s-sizeof(struct sdshdr));
+
+    // sds 现有 buf 的长度
+    size_t totlen = sh->free+sh->len;
+
+    //如果 s 的长度小于 len , 扩展 s 的长度
+    if (len > totlen){
+        s = sdsMakeRoomFor(s,len-totlen);
+        //内存申请失败
+        if (s == NULL) return NULL;
+        //获取新 s 的长度
+        sh = (void*)(s-(sizeof(struct sdshdr)));
+        totlen = sh->free+sh->len;
+    }
+    
+    //复制内容 T = O(N)
+    memcpy(s,t,len);
+
+    // 添加终结符
+    s[len] = '\0';
+
+    //更新 新字符串的 len,free 属性
+    sh->len = len;
+    sh->free = totlen - len;
+
+    return s;
+}
+
+/**
+ * 将字符串复制到 sds 中, 覆盖原字符串
+ * 
+ * 如果 sds 的长度少于 len 个字符，那么扩展 sds
+ * 
+ * 复杂度
+ * T = O(N)
+ * 
+ * 返回值
+ * 成功：新的 sds
+ * 失败：NULL
+ */
+sds sdscpy(sds s,const char *t){
+    return sdscpylen(s, t, strlen(t));
+}
 
 //执行: gcc -g zmalloc.c testhelp.h sds.c
 //执行: ./a.exe
 int main(void){
-
+    // printf("x=%s\n",x);
     struct sdshdr *sh;
     sds x = sdsnew("foo"), y;
     test_cond("Create a string and obtain the length",
@@ -196,5 +254,8 @@ int main(void){
     test_cond("Strings concatenation",
         sdslen(x) == 5 && memcmp(x,"fobar\0",6) == 0);
 
+    x = sdscpy(x,"a");
+    test_cond("sdscpy() against an originally longer string",
+        sdslen(x) == 1 && memcmp(x,"a\0",2) == 0)
     return 0;
 }
