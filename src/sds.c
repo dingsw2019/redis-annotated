@@ -46,6 +46,20 @@ sds sdsnewlen(const void *init,size_t initlen){
 }
 
 /**
+ * 创建并返回一个只保存了空字符串 "" 的 sds
+ * 
+ * 返回值
+ * 成功 返回 sds 的 buf
+ * 失败 返回NULL
+ * 
+ * 复杂度
+ * T = O(1)
+ */
+sds sdsempty(void){
+    return sdsnewlen("",0);
+}
+
+/**
  * 根据给定字符串init，创建一个包含同样字符串的sds 
  * 
  * 参数
@@ -236,6 +250,105 @@ sds sdscpy(sds s,const char *t){
     return sdscpylen(s, t, strlen(t));
 }
 
+/**
+ * 打印函数, 被 sdscatprintf 调用
+ */
+sds sdscatvprintf(sds s, const char *fmt, va_list ap){
+    va_list cpy;
+
+    char staticbuf[1024], *buf = staticbuf, *t;
+    size_t buflen = strlen(fmt)*2;
+
+    // 优先静态缓冲区,如果空间不够,变为堆分配
+    if (buflen > sizeof(staticbuf)) {
+        buf = zmalloc(buflen);
+        if (buf == NULL) return NULL;
+    } else {
+        buflen = sizeof(staticbuf);
+    }
+
+    // 缓冲区大小小于字符串大小,
+    // 将缓冲区大小扩容两倍
+    while(1) {
+        buf[buflen-2] = '\0';
+        va_copy(cpy,ap);
+
+        vsnprintf(buf,buflen,fmt,cpy);
+        if (buf[buflen-2] != '\0') {
+            if (buf != staticbuf) zfree(buf);
+            buflen *= 2;
+            buf = zmalloc(buflen);
+            if (buf == NULL) return NULL;
+            continue;
+        }
+        break;
+    }
+
+    t = sdscat(s,buf);
+    if (buf != staticbuf) zfree(buf);
+    return t;
+
+}
+
+/**
+ * 打印任意数量个字符串，并将这些字符串追加到 sds 的末尾
+ * 
+ * Example:
+ *
+ * s = sdsempty("Sum is: ");
+ * s = sdscatprintf(s,"%d+%d = %d",a,b,a+b).
+ */
+sds sdscatprintf(sds s, const char *fmt, ...){
+    //可变函数
+    va_list ap;
+    char *t;
+
+    //将第一个变量给可变函数
+    va_start(ap,fmt);
+
+    t = sdscatvprintf(s,fmt,ap);
+    va_end(ap);
+    return t;
+}
+
+/**
+ * 对 sds 左右两端进行修剪，清除其中 cset 指定的所有字符
+ * 
+ * 比如 sdstrim(xxyyabcyyxy, "xy") 将返回 "abc"
+ * 
+ * 复杂性
+ *  T = O(M*N) ， M 为 SDS 长度，N 为 cset 长度
+ */
+sds sdstrim(sds s,const char *cset){
+
+    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+    char *start, *end, *sp, *ep;
+    size_t len;
+
+    // 设置和记录指针
+    sp = start = s;
+    ep = end = s+sdslen(s)-1;
+
+    // 修剪，T = O(N^2)
+    while(sp <= end && strchr(cset,*sp)) sp++;
+    while(ep >= start && strchr(cset,*ep)) ep--;
+
+    // 计算 trim 完毕之后剩余的字符串长度
+    len = (sp > ep) ? 0 : ((ep-sp)+1);
+
+    // 如果有需要，前移字符串内容
+    if (sh->buf != sp) memmove(sh->buf,sp,len);
+
+    // 添加终结符
+    sh->buf[len] = '\0';
+
+    // 更新属性 len free 
+    sh->free = sh->free+(sh->len-len);
+    sh->len = len;
+
+    return s;
+}
+
 //执行: gcc -g zmalloc.c testhelp.h sds.c
 //执行: ./a.exe
 int main(void){
@@ -257,5 +370,22 @@ int main(void){
     x = sdscpy(x,"a");
     test_cond("sdscpy() against an originally longer string",
         sdslen(x) == 1 && memcmp(x,"a\0",2) == 0)
+
+    x = sdscpy(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk");
+    test_cond("sdscpy() against an originally shorter string",
+        sdslen(x) == 33 &&
+        memcmp(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk\0",33) == 0)
+
+    sdsfree(x);
+    x = sdscatprintf(sdsempty(),"%d",123);
+    test_cond("sdscatprintf() seems working in the base case",
+        sdslen(x) == 3 && memcmp(x,"123\0",4) == 0)
+    
+    sdsfree(x);
+    x = sdsnew("xxciaoyyy");
+    sdstrim(x,"xy");
+    test_cond("sdstrim() correctly trims characters",
+        sdslen(x) == 4 && memcmp(x,"ciao\0",5) == 0)
+
     return 0;
 }

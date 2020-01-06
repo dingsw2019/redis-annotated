@@ -1,7 +1,11 @@
 #ifndef __SDS_H
 #define __SDS_H
 
+//最大预分配长度
 #define SDS_MAX_PREALLOC (1024*1024)
+
+#include <sys/types.h>
+#include <stdarg.h>
 
 //类型别名,存sdshdr的buf属性
 typedef char *sds;
