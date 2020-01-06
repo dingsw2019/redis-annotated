@@ -79,6 +79,37 @@ sds sdsnew(const char *init){
 }
 
 /**
+ * 复制给定的 sds 的副本
+ * 
+ * 返回值
+ * 成功 ： 返回 sds 的副本
+ * 失败 ： 返回 NULL
+ * 
+ * 复杂度
+ *  T = O(N)
+ */
+sds sdsdup(sds s){
+    return sdsnewlen(s,strlen(s));
+}
+
+/**
+ * 在不释放 sds 的字符串空间的情况下
+ * 重置 sds 所保存的字符串为空字符串
+ * 
+ * 复杂度
+ * T = O(1)
+ */
+void sdsclear(sds s){
+
+    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+
+    sh->free += sh->len;
+    sh->len = 0;
+
+    sh->buf[0] = '\0';
+}
+
+/**
  * 释放给定的 sds
  * 
  * 复杂度
@@ -142,6 +173,41 @@ sds sdsMakeRoomFor(sds s,size_t addlen){
 }
 
 /**
+ * 将 sds 扩充至指定长度，未使用的空间以 0 字节填充
+ * 
+ * 返回值
+ * 成功：返回 sds
+ * 失败：返回 NULL
+ * 
+ * 复杂度
+ * T = O(N)
+ */
+sds sdsgrowzero(sds s,size_t len){
+    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+    size_t totlen, curlen = sh->len;
+
+    // 如果 len 比字符串的现有长度小，
+    // 那么直接返回，不做动作
+    if (len <= curlen) return s; 
+    
+    // 扩展 sds
+    s = sdsMakeRoomFor(s,len-curlen);
+    // 如果内存不足，直接返回
+    if (s == NULL) return NULL;
+
+    // 将新分配的空间用 0 填充，防止出现垃圾内容
+    sh = (void*)(s-(sizeof(struct sdshdr)));
+    memset(s+curlen,0,(len-curlen+1));
+
+    // 更新属性
+    totlen = sh->len+sh->free;
+    sh->len = len;
+    sh->free = totlen-sh->len;
+
+    return s;
+}
+
+/**
  * 将长度为 len 的字符串 t 追加到 sds 的字符串末尾
  * 
  * 返回值
@@ -192,7 +258,21 @@ sds sdscat(sds s,const char *t){
 }
 
 /**
- * 将字符串 t 的前 len 个字符复制到 s 中,
+ * 将另一个 sds 追加到 一个 sds 的末尾
+ * 
+ * 返回值
+ * 成功：返回 sds
+ * 失败：返回 NULL
+ * 
+ * 复杂度
+ * T = O(N)
+ */
+sds sdscatsds(sds s, const sds t){
+    return sdscatlen(s, t, strlen(t));
+}
+
+/**
+ * 将字符串 t 的前 len 个字符复制到 s 中,覆盖原内容
  * 并在字符串最后添加终结符
  * 
  * 如果 sds 的长度少于 len 个字符，那么扩展 sds
@@ -350,19 +430,15 @@ sds sdstrim(sds s,const char *cset){
 }
 
 /**
- * 复制给定的 sds 的副本
+ * 按索引对截取 sds 字符串的其中一段
+ * start 和 end 都是闭区间(包含在内)
  * 
- * 返回值
- * 成功 ： 返回 sds 的副本
- * 失败 ： 返回 NULL
+ * 索引从 0 开始，最大为 sdslen(s)-1
+ * 索引可以是负数，sdslen(s) - 1 == -1
  * 
  * 复杂度
- *  T = O(N)
+ * T = O(N)
  */
-sds sdsdup(sds s){
-    return sdsnewlen(s,strlen(s));
-}
-
 void sdsrange(sds s,int start,int end){
 
     struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
@@ -406,6 +482,14 @@ void sdsrange(sds s,int start,int end){
     sh->len = newlen;
 }
 
+/**
+ * 对比两个 sds 
+ * 
+ * 返回值
+ * int : 相等返回 0 ，s1 较大返回正数 ， s2 较大返回负数
+ * 
+ * T = O(N)
+ */
 int sdscmp(const sds s1, const sds s2){
     size_t l1, l2, minlen;
     int cmp;
