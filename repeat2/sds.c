@@ -99,6 +99,84 @@ sds sdscat(sds s,const void *t){
     return sdscatlen(s,t, strlen(t));
 }
 
+// 删除 s 两端的 cset 指定的字符
+sds sdstrim(sds s,const char *cset){
+
+    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+    char *start, *end, *sp, *ep;
+    size_t len;
+
+    // 设置起始和指针
+    sp = start = s;
+    ep = end = s+sdslen(s)-1;
+
+    // 修剪
+    while(sp <= end && strchr(cset,*sp)) sp++;
+    while(ep > start && strchr(cset,*ep)) ep--;
+
+    // 修剪后的字符串长度
+    len = (sp > ep) ? 0 : ((ep-sp)+1);
+
+    // 如果左侧有修剪,需移动字符
+    if (sh->buf != sp) memmove(sh->buf,sp,len);
+
+    // 添加终结符
+    sh->buf[len] = '\0';
+
+    // 更新属性
+    sh->free = sh->free+(sh->len-len);
+    sh->len = len;
+
+    return s;
+}
+
+// 复制 sds 内容 并返回
+sds sdsdup(sds s){
+    return sdsnewlen(s,strlen(s));
+}
+
+// 指定范围，截取 sds
+void sdsrange(sds s,int start,int end){
+
+    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+    size_t newlen, len = sdslen(s);
+    // 负数索引 转换成正数索引
+    if (start < 0) {
+        start = len+start;
+        if (start < 0) start = 0;
+    }
+
+    if (end < 0) {
+        end = len+end;
+        if (end < 0) end = 0;
+    }
+
+    // 计算截取后的 sds 长度
+    newlen = (start > end) ? 0 : (end-start)+1;
+
+    // 判断 start,end 是否在 len 范围内
+    if (newlen != 0) {
+        if (start > (signed)len) {
+            newlen = 0;
+        }else if (end > (signed)len) {
+            end = len-1;
+            newlen = (start > end) ? 0 : (end-start)+1;
+        }
+    } else {
+        start = 0;
+    }
+
+    // 如果需要,移动字符串
+    if (start && newlen) memmove(sh->buf,s+start,newlen);
+
+    // 添加终结符
+    sh->buf[newlen] = '\0';
+
+    // 更新属性
+    sh->free = sh->free+(sh->len-newlen);
+    sh->len = newlen;
+}
+
 int main(void){
     
     struct sdshdr *sh;
@@ -114,5 +192,47 @@ int main(void){
     x = sdscat(x,"bar");
     test_cond("Strings concatenation",
         sdslen(x) == 5 && memcmp(x,"fobar\0",6) == 0);
+
+    sdsfree(x);
+    x = sdsnew("xxciaoyyy");
+    sdstrim(x,"xy");
+    test_cond("sdstrim() correctly trims characters",
+        sdslen(x) == 4 && memcmp(x,"ciao\0",5) == 0)
+
+    y = sdsdup(x);
+    sdsrange(y,1,1);
+    test_cond("sdsrange(...,1,1)",
+        sdslen(y) == 1 && memcmp(y,"i\0",2) == 0)
+
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,1,-1);
+    test_cond("sdsrange(...,1,-1)",
+        sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
+
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,-2,-1);
+    test_cond("sdsrange(...,-2,-1)",
+        sdslen(y) == 2 && memcmp(y,"ao\0",3) == 0)
+
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,2,1);
+    test_cond("sdsrange(...,2,1)",
+        sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
+
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,1,100);
+    test_cond("sdsrange(...,1,100)",
+        sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
+
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,100,100);
+    test_cond("sdsrange(...,100,100)",
+        sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
+
     return 0;
 }
