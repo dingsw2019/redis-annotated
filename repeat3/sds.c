@@ -41,6 +41,11 @@ sds sdsnew(const char *init){
     return sdsnewlen(init,initlen);
 }
 
+// 复制 sds
+sds sdsdup(sds s){
+    return sdsnewlen(s,strlen(s));
+}
+
 // void sdsfree(sds s){
 //     zfree(s-sizeof(struct sdshdr));
 // }
@@ -174,6 +179,69 @@ sds sdstrim(sds s,const char *cset){
     return s;
 }
 
+// 指定范围截取 sds
+// -1 代表最后1位
+sds sdsrange(sds s,int start,int end){
+
+    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+    size_t newlen, len = sdslen(s);
+    // 负数索引 转换为正数索引
+    if (start < 0) {
+        start = len+start;
+        if (start < 0) start = 0;
+    }
+    if (end < 0) {
+        end = len+end;
+        if (end < 0) end = 0;
+    }
+
+    // 截取后的字符串长度
+    newlen = (start > end) ? 0 : (end-start)+1;
+
+    // 索引值是否超出范围,头部索引超出,长度为0
+    // 如果是尾部索引超出,给最大长度
+    if (newlen != 0) {
+        if (start >= (signed)len){
+            newlen = 0;
+        } else if (end >= (signed)len) {
+            end = len-1;
+            newlen = (start > end) ? 0 : (end-start)+1;
+        }
+    } else {
+        start = 0;
+    }  
+
+    // 如果有需要，移动字符串起始位置
+    if (start && newlen) memmove(sh->buf,s+start,newlen);
+
+    // 添加终结符
+    sh->buf[newlen] = '\0';
+    
+    // 更新属性
+    sh->free = sh->free+(len-newlen);
+    sh->len = newlen;
+
+    return s;
+}
+
+//比较两个字符串
+//相等返0; s1>s2 返1; s2>s1返-1
+int sdscmp(const sds s1,const sds s2){
+
+    size_t l1,l2,minlen;
+    int cmp;
+
+    l1 = sdslen(s1);
+    l2 = sdslen(s2);
+    minlen = (l1 < l2) ? l1 : l2;
+
+    cmp = memcmp(s1,s2,minlen);
+
+    if (cmp == 0) return l1-l2;
+
+    return cmp;
+}
+
 //执行: gcc -g zmalloc.c testhelp.h sds.c
 //执行: ./a.exe
 int main(void){
@@ -217,64 +285,64 @@ int main(void){
     test_cond("sdstrim() correctly trims characters",
         sdslen(x) == 4 && memcmp(x,"ciao\0",5) == 0)
 
-    // y = sdsdup(x);
-    // sdsrange(y,1,1);
-    // test_cond("sdsrange(...,1,1)",
-    //     sdslen(y) == 1 && memcmp(y,"i\0",2) == 0)
+    y = sdsdup(x);
+    sdsrange(y,1,1);
+    test_cond("sdsrange(...,1,1)",
+        sdslen(y) == 1 && memcmp(y,"i\0",2) == 0)
 
-    // sdsfree(y);
-    // y = sdsdup(x);
-    // sdsrange(y,1,-1);
-    // test_cond("sdsrange(...,1,-1)",
-    //     sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,1,-1);
+    test_cond("sdsrange(...,1,-1)",
+        sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
 
-    // sdsfree(y);
-    // y = sdsdup(x);
-    // sdsrange(y,-2,-1);
-    // test_cond("sdsrange(...,-2,-1)",
-    //     sdslen(y) == 2 && memcmp(y,"ao\0",3) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,-2,-1);
+    test_cond("sdsrange(...,-2,-1)",
+        sdslen(y) == 2 && memcmp(y,"ao\0",3) == 0)
 
-    // sdsfree(y);
-    // y = sdsdup(x);
-    // sdsrange(y,2,1);
-    // test_cond("sdsrange(...,2,1)",
-    //     sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,2,1);
+    test_cond("sdsrange(...,2,1)",
+        sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
 
-    // sdsfree(y);
-    // y = sdsdup(x);
-    // sdsrange(y,1,100);
-    // test_cond("sdsrange(...,1,100)",
-    //     sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,1,100);
+    test_cond("sdsrange(...,1,100)",
+        sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
 
-    // sdsfree(y);
-    // y = sdsdup(x);
-    // sdsrange(y,100,100);
-    // test_cond("sdsrange(...,100,100)",
-    //     sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,100,100);
+    test_cond("sdsrange(...,100,100)",
+        sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
 
-    // sdsfree(y);
-    // sdsfree(x);
-    // x = sdsnew("foo");
-    // y = sdsnew("foa");
-    // test_cond("sdscmp(foo,foa)", sdscmp(x,y) > 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("foo");
+    y = sdsnew("foa");
+    test_cond("sdscmp(foo,foa)", sdscmp(x,y) > 0)
 
-    // sdsfree(y);
-    // sdsfree(x);
-    // x = sdsnew("bar");
-    // y = sdsnew("bar");
-    // test_cond("sdscmp(bar,bar)", sdscmp(x,y) == 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("bar");
+    y = sdsnew("bar");
+    test_cond("sdscmp(bar,bar)", sdscmp(x,y) == 0)
 
-    // sdsfree(y);
-    // sdsfree(x);
-    // x = sdsnew("aar");
-    // y = sdsnew("bar");
-    // test_cond("sdscmp(aar,bar)", sdscmp(x,y) < 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("aar");
+    y = sdsnew("bar");
+    test_cond("sdscmp(aar,bar)", sdscmp(x,y) < 0)
 
-    // sdsfree(y);
-    // sdsfree(x);
-    // x = sdsnew("bara");
-    // y = sdsnew("bar");
-    // test_cond("sdscmp(bara,bar)", sdscmp(x,y) > 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("bara");
+    y = sdsnew("bar");
+    test_cond("sdscmp(bara,bar)", sdscmp(x,y) > 0)
 
     // sdsfree(y);
     // sdsfree(x);
