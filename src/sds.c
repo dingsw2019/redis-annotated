@@ -568,9 +568,10 @@ sds *sdssplitargs(const char *line,int *argc){
                 // 双引号内字符,
                 // 1.十六进制转换成十进制,记录到current
                 // 2.转义字符,记录到current
-                // 3.右双引号之后只能是空白字符,非空白字符,异常退出
-                //   右双引号没获取前,没有字符了也执行异常退出流程
-                // 4.除 3 中的异常情况,所有字符记录到current
+                // 3.右双引号之后只能是空白字符,是空白字符,
+                //   本次current截取完成,非空白字符,异常退出
+                // 4.右双引号没获取前,没有字符了也执行异常退出流程
+                // 5.除 3,4 中的异常情况,所有字符记录到current
                 if (inq) {
                     
                     // 十六进制符号 转 十进制后 存储
@@ -582,9 +583,8 @@ sds *sdssplitargs(const char *line,int *argc){
                         // 十六进制转十进制
                         byte = (hex_digit_to_int(*(p+2))*16)+
                                 hex_digit_to_int(*(p+3));
-                        
-                        current = sdscatlen(current,(char*)&byte,1);
 
+                        current = sdscatlen(current,(char*)&byte,1);
                         p += 3;
                     } else if (*p == '\\' && *(p+1)) {
                         // 存储空白符,或字符
@@ -611,25 +611,20 @@ sds *sdssplitargs(const char *line,int *argc){
                         current = sdscatlen(current,p,1);
                     }
                 } else if (insq) {
-                    if(*argc == 2){
-                        printf("p=%c,empty=%d\n",*p,!*p);
-                    }
-                    // 1.
-                    // 3.右单引号之后只能是空白字符,非空白字符,异常退出
-                    //   右双引号没获取前,没有字符了也执行异常退出流程
-                    // 4.除 3 中的异常情况,所有字符记录到current
+                    // 1.单引号内的转义单引号,记录到current
+                    // 2.右单引号之后只能是空白字符,是空白字符,
+                    //   本次current截取完成,非空白字符,异常退出
+                    // 3.右单引号没获取前,没有字符了也执行异常退出流程
+                    // 4.除 2,3 中的异常情况,所有字符记录到current
                     if (*p == '\\' && *(p+1) == '\'') {
-                        printf("1\n");
                         p++;
                         current = sdscatlen(current,"'",1);
                     } else if (*p == '\'') {
-                        printf("2\n");
                         if (*(p+1) && !isspace(*(p+1))) goto err;
                         done=1;
                     } else if (!*p){
                         goto err;
                     } else {
-                        printf("3\n");
                         current = sdscatlen(current,p,1);
                     }
                 } else {
@@ -664,11 +659,13 @@ sds *sdssplitargs(const char *line,int *argc){
             // 删除 搜索到的连续字符串
             current = NULL;
         } else {
+            // 空字符串,返回空指针数组
             if (vector == NULL) vector = zmalloc(sizeof(void*));
             return vector;
         }
     }
 err:
+    //释放本函数内申请的所有 sds
     while((*argc)--)
         sdsfree(vector[*argc]);
     zfree(vector);
@@ -677,38 +674,22 @@ err:
     return NULL;
 }
 
+/**
+ * 输出 sdssplitargs 的结果
+ */ 
+void sdsSplitArgsPrint(const char *line,sds *argv,int count){
+    printf("----------------------------------\n");
+    printf("line = [%s], count = [%d]\n", line, count);
+    for (int i = 0; i < count; i++) {
+        printf("argv[%d]=[%s]\n", i, argv[i]);
+    }
+    printf("----------------------------------\n");
+}
+
 //执行: gcc -g zmalloc.c testhelp.h sds.c
 //执行: ./a.exe
 int main(void){
 
-    int count;
-    // const char * line = "set a \"ohnot\"";
-    const char * line = " hset name \\\'name:filed\'";
-    // const char * line = " hset name \\\'name:filed\\\' \"value:field\" ";
-    // const char * line = "set a \"ohnot\" \\x00hisisthe value\"";
-    // const char * line = " hset\"\xE5\x93\x88 name \"name:filed\" \"value:field\" ";
-    sds * tokens = sdssplitargs(line, &count);
-
-    printf("line = [%s], count = [%d]\n", line, count);
-    for (int i = 0; i < count; i++) {
-        printf("argv[%d] = [%s]\n", i, tokens[i]);
-    }
-
-    return 0;
-    int cnt;
-    sds *arr = sdssplitargs("timeout 10086\r\nport 123321\r\n",&cnt);
-    
-    printf("argc is %d\n", cnt);
-    for (int i=0;i<cnt;i++){
-        printf("argv[%d] is %s\n",i,arr[i]);
-    }
-    // printf("argc is %d\n", cnt);
-    // printf("argv[0] is %s\n", arr[0]);
-    // printf("argv[1] is %s\n", arr[1]);
-    // printf("argv[2] is %s\n", arr[2]);
-    // printf("argv[3] is %s\n", arr[3]);
-
-    return 0;
     // printf("x=%s\n",x);
     struct sdshdr *sh;
     sds x = sdsnew("foo"), y;
@@ -809,6 +790,28 @@ int main(void){
     // y = sdscatrepr(sdsempty(),x,sdslen(x));
     // test_cond("sdscatrepr(...data...)",
     //     memcmp(y,"\"\\a\\n\\x00foo\\r\"",15) == 0)
+    
+    int count;
+
+    // 双引号
+    char *line = "set a \"ohnot\"";
+    sds *argv = sdssplitargs(line, &count);
+    sdsSplitArgsPrint(line,argv,count);
+
+    // 双引号下的十六进制转十进制
+    line = "\"\\x40\"  hisisthe value";
+    argv = sdssplitargs(line, &count);
+    sdsSplitArgsPrint(line,argv,count);
+
+    // 单引号
+    line = " hset name '\\\'name\\\':filed'";
+    argv = sdssplitargs(line, &count);
+    sdsSplitArgsPrint(line,argv,count);
+
+    // 无单双引号的其他情况
+    line = "timeout 10086\r\nport 123321\r\n";
+    argv = sdssplitargs(line, &count);
+    sdsSplitArgsPrint(line,argv,count);
 
     return 0;
 }
