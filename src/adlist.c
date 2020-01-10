@@ -3,7 +3,13 @@
 #include "zmalloc.h"
 #include <stdio.h>
 
-
+/**
+ * 创建一个新的空链表
+ * 
+ * 创建成功返回链表，失败返回 NULL
+ * 
+ * T = O(1)
+ */
 list *listCreate(void){
 
     struct list *list;
@@ -22,6 +28,46 @@ list *listCreate(void){
     return list;
 }
 
+/**
+ * 释放整个链表，以及链表中所有节点
+ * 
+ * T = O(N)
+ */
+void listRelease(list *list){
+
+    // 释放所有节点
+    unsigned long len;
+    listNode *current,*next;
+
+    // 指向头指针
+    current = list->head;
+    // 遍历整个链表
+    len = list->len;
+    while(len--){
+        next = current->next;
+
+        // 如果设置了值释放函数，那么调用它
+        if (list->free) list->free(current->value);
+
+        // 释放节点
+        zfree(current);
+
+        current = next;
+    }
+    
+    // 释放链表
+    zfree(list);
+}
+
+/**
+ * 将一个包含有给定值指针 value 的新节点添加到链表的表头
+ * 
+ * 如果新节点分配内存出错，那么不执行任何动作，返回 NULL
+ * 
+ * 如果执行成功，返回传入的链表指针
+ * 
+ * T = O(1)
+ */
 list *listAddNodeHead(list *list,void *value){
 
     // 新节点
@@ -34,13 +80,13 @@ list *listAddNodeHead(list *list,void *value){
     // 保存值指针
     node->value = value;
 
-    // 空链表,头尾指向空
-    // 非空链表，将链表头指向新节点
+    // 添加节点到空链表
     if (list->len == 0) {
         // 链表头尾指向 新节点
         list->head = list->tail = node;
         // 节点的前后节点不存在，指向 NULL
         node->prev = node->next = NULL;
+    // 添加节点到非空链表
     } else {
         // 新节点的前一个节点不存在，指向 NULL
         node->prev = NULL;
@@ -53,6 +99,49 @@ list *listAddNodeHead(list *list,void *value){
     }
 
     // 增加链表长度
+    list->len++;
+
+    return list;
+}
+
+/**
+ * 将一个包含有给定值指针 value 的新节点添加到链表的表尾
+ * 
+ * 如果新节点分配内存出错，那么不执行任何动作，返回 NULL
+ * 
+ * 如果执行成功，返回传入的链表指针
+ * 
+ * T = O(1)
+ */
+list *listAddNodeTail(list *list,void *value){
+    
+    listNode *node;
+    // 新节点申请内存
+    if((node=zmalloc(sizeof(*node))) == NULL)
+        return NULL;
+
+    // 节点赋值
+    node->value = value;
+
+    // 空链表,链表头尾均指向新节点
+    // 非空链表,表尾指向新节点
+    if (list->len == 0){
+        // 新节点无前后节点
+        node->prev = node->next = NULL;
+        // 只有一个节点,链表头尾均指向新节点
+        list->head = list->tail = node;
+    } else {
+        // 尾节点后没有节点
+        node->next = NULL;
+        // 尾节点的前一个节点,是旧的尾节点
+        node->prev = list->tail;
+        // 旧的尾节点的后一个节点,是新节点
+        list->tail->next = node;
+        // 链表的尾节点指向新节点
+        list->tail = node;
+    }
+
+    // 链表节点数+1
     list->len++;
 
     return list;
@@ -109,13 +198,24 @@ int main(void){
     char b[][10] = {"believe", "it", "or", "not"};
     // listIter iter;
     listNode *node;
-    list *li = listCreate();
+    list *list = listCreate();
 
+    // 表头添加，结果：li size is 4, elements:not or it believe
     for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
-        listAddNodeHead(li, b[i]);
+        listAddNodeHead(list, b[i]);
     }
+    printList(list);
 
-    printList(li);
+    listRelease(list);
+    list = listCreate();
+    // 表尾添加, 结果：li size is 4, elements:believe it or not
+    for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
+        listAddNodeTail(list, b[i]);
+    }
+    printList(list);
+
+
+    
 
     // printf("\nSearch a key :\n");
     // listSetMatchMethod(li, keyMatch);
