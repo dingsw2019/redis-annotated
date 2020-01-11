@@ -22,6 +22,27 @@ list *listCreate(void){
     return list;
 }
 
+// 释放链表所有的节点 和链表
+void listRelease(list *list){
+
+    listNode *current,*next;
+    unsigned long len = list->len;
+    // 释放所有节点
+    current = list->head;
+    while(len--){
+        next = current->next;
+
+        if(list->free) list->free(current->value);
+
+        zfree(current);
+
+        current = next;
+    }
+    
+    // 释放链表
+    zfree(list);
+}
+
 // 从表头给双链表添加一个节点
 list *listAddNodeHead(list *list,void *value){
 
@@ -46,6 +67,35 @@ list *listAddNodeHead(list *list,void *value){
     }
 
     // 节点数量+1
+    list->len++;
+
+    return list;
+}
+
+// 从表尾给双链表添加一个节点
+list *listAddNodeTail(list *list,void *value){
+
+    listNode *node;
+    // 为新节点创建内存
+    if ((node=zmalloc(sizeof(*node))) == NULL)
+        return NULL;
+
+    // 节点值
+    node->value = value;
+
+    // 空链表，添加节点
+    // 非空链表，新节点添加到链表表尾
+    if (list->len == 0) {
+        node->prev = node->next = NULL;
+        list->head = list->tail = node;
+    } else {
+        node->prev = list->tail;
+        node->next = NULL;
+        list->tail->next = node;
+        list->tail = node;
+    }
+
+    // 链表长度+1
     list->len++;
 
     return list;
@@ -115,13 +165,21 @@ int main(void){
     char b[][10] = {"believe", "it", "or", "not"};
     // listIter iter;
     listNode *node;
-    list *li = listCreate();
+    list *list = listCreate();
 
+    // 表头添加，结果：li size is 4, elements:not or it believe
     for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
-        listAddNodeHead(li, b[i]);
+        listAddNodeHead(list, b[i]);
     }
+    printList(list);
 
-    printList(li);
+    listRelease(list);
+    list = listCreate();
+    // 表尾添加, 结果：li size is 4, elements:believe it or not
+    for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
+        listAddNodeTail(list, b[i]);
+    }
+    printList(list);
 
     // printf("\nSearch a key :\n");
     // listSetMatchMethod(li, keyMatch);
