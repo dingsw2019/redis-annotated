@@ -1,7 +1,8 @@
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "adlist.h"
 #include "zmalloc.h"
-#include <stdio.h>
 
 /**
  * 创建一个新的空链表
@@ -148,6 +149,95 @@ list *listAddNodeTail(list *list,void *value){
 }
 
 /**
+ * 创建一个包含值 value 的新节点，并将它添加到 old_node 之前或之后
+ * 
+ * 如果 after = 0，将新节点添加到 old_node 之后
+ * 如果 after = 1，将新节点添加到 old_node 之前
+ *
+ * T = O(1)
+ */
+list *listInsertNode(list *list,listNode *old_node,void *value,int after){
+
+    listNode *node;
+
+    // 创建新节点
+    if((node = zmalloc(sizeof(*node))) == NULL)
+        return NULL;
+
+    node->value = value;
+
+    // 将新节点加入链表
+    if (after) {
+        // 新节点添加到旧节点之后
+        node->prev = old_node;
+        node->next = old_node->next;
+        // 旧节点为尾节点,更新尾节点
+        if (list->tail == old_node) {
+            list->tail = node;
+        }
+    } else {
+        // 新节点添加到旧节点之前
+        node->prev = old_node->prev;
+        node->next = old_node;
+        // 旧节点为头节点，更新头结点
+        if (list->head == old_node) {
+            list->head = node;
+        }
+    }
+
+    // 新节点的前一个节点，原来指向旧节点，
+    // 改为指向新节点
+    if (node->prev != NULL) {
+        node->prev->next = node;
+    }
+
+    // 新节点的后一个节点，原来指向旧节点
+    // 改为指向新节点
+    if (node->next != NULL) {
+        node->next->prev = node;
+    }
+
+    // 节点数量+1
+    list->len++;
+
+    return list;
+}
+
+/**
+ * 从链表 list 中删除给定节点 node
+ * 
+ * T = O(1)
+ */
+void listDelNode(list *list,listNode *node){
+
+    // 调整前置节点的指针
+    if (node->prev) {
+        node->prev->next = node->next;
+    } else {
+        // 头节点调整
+        list->head = node->next;
+    }
+
+    // 调整后置节点的指针
+    if (node->next) {
+        node->next->prev = node->prev;
+    } else {
+        // 尾节点调整
+        list->tail = node->prev;
+    }
+
+    // 释放值
+    if (list->free) list->free(node->value);
+
+    // 释放节点
+    zfree(node);
+
+    // 链表数量-1
+    list->len--;
+}
+
+
+/**
  * 将迭代器的方向设置为 从表头向表尾迭代
  * 并将迭代指针重新指向表头节点
  * 
@@ -157,6 +247,18 @@ void listRewind(list *list,listIter *li){
     li->next = list->head;
     li->direction = AL_START_HEAD;
 }
+
+/**
+ * 将迭代器的方向设置为 从表尾到表头
+ * 并将迭代指针重新指向表尾节点
+ * 
+ * T = O(1)
+ */
+void *listRewindTail(list *list,listIter *li){
+    li->next = list->tail;
+    li->direction = AL_START_TAIL;
+}
+
 
 /**
  * 返回迭代器当前所指向的节点
@@ -181,6 +283,199 @@ listNode *listNext(listIter *iter){
     return current;
 }
 
+/**
+ * 为指定链表创建一个迭代器
+ * 同时指定方向，迭代时使用
+ * 
+ * T = O(1)
+ */
+listIter *listGetIterator(list *list,int direction){
+
+    // 为迭代器分配内存
+    listIter *iter;
+    if ((iter=zmalloc(sizeof(*iter))) == NULL) return NULL;
+    
+    // 根据迭代方向，设置迭代器的起始节点
+    if (direction == AL_START_HEAD)
+        iter->next = list->head;
+    else 
+        iter->next = list->tail;
+    
+    // 记录迭代方向
+    iter->direction = direction;
+
+    return iter;
+}
+
+/**
+ * 释放迭代器
+ * 
+ * T = O(1)
+ */
+void listReleaseIterator(listIter *iter){
+    zfree(iter);
+}
+
+/**
+ * 复制整个链表
+ * 
+ * 复制成功返回输入链表的副本
+ * 如果因为内存不足而造成复制失败，返回NULL
+ * 
+ * 优先使用自定义的 节点值复制函数 dup
+ * 
+ * 无论复制成功还是失败，输入节点都不会修改
+ * 
+ * T = O(N)
+ */
+list *listDup(list *orig){
+
+    list *copy;
+    listIter *iter;
+    listNode *node;
+
+    // 创建新链表
+    if ((copy = listCreate()) == NULL) {
+        return NULL;
+    }
+
+    // 创建迭代器
+    iter = listGetIterator(orig,AL_START_HEAD);
+
+    // 复制链表的所有节点
+    while ((node = listNext(iter)) != NULL){
+
+        void *value;
+
+        // 复制节点值
+        if (copy->dup) {
+            value = copy->dup(node->value);
+            // 复制异常,释放申请的内存
+            if (value == NULL) {
+                listRelease(copy);
+                listReleaseIterator(iter);
+                return NULL;
+            }
+        } else {
+            value = node->value;
+        }
+
+        // 将节点添加到链表
+        if (listAddNodeTail(copy,value) == NULL) {
+            // 添加节点异常，释放申请的内存
+            listRelease(copy);
+            listReleaseIterator(iter);
+            return NULL;
+        }
+    }
+
+    // 释放迭代器
+    listReleaseIterator(iter);
+
+    // 返回副本
+    return copy;
+}
+
+/**
+ * 查找链表 list 中值和 key 匹配的节点
+ * 
+ * 优先使用自定义的 match 函数进行匹配
+ * 
+ * 匹配成功，返回节点地址
+ * 匹配失败，返回NULL
+ * 
+ * T = O(N)
+ */
+listNode *listSearchKey(list *list,void *key){
+
+    listIter *iter;
+    listNode *node;
+
+    // 获取 list 的迭代器
+    iter = listGetIterator(list,AL_START_HEAD);
+
+    // 匹配 key ，优先使用自定义匹配函数
+    while((node=listNext(iter)) != NULL){
+
+        if (list->match) {
+            if(list->match(node->value,key)){
+                // 匹配成功，释放迭代器
+                listReleaseIterator(iter);
+                return node;
+            }
+        
+        } else {
+            if (node->value == key){
+                listReleaseIterator(iter);
+                return node;
+            }
+        }
+    }
+
+    listReleaseIterator(iter);
+
+    return NULL;
+}
+
+/**
+ * 返回链表在给定索引上的节点
+ * 
+ * 索引可以是任一个整数
+ * 如果索引超出范围，返回NULL
+ *
+ * T = O(N)
+ */
+listNode *listIndex(list *list,long index) {
+    listNode *n;
+
+    // 如果索引为负数，从表尾开始查找
+    if (index < 0) {
+        index = (-index)-1;
+        n = list->tail;
+        while(index-- && n) n = n->prev;
+    // 如果索引为正数，从表头开始查找
+    } else {
+        n = list->head;
+        while(index-- && n) n = n->next;
+    }
+
+    return n;
+}
+
+/**
+ * 将链表尾节点，移动为表头节点
+ * 
+ * T = O(1)
+ */
+void listRotate(list *list){
+
+    // 尾节点
+    listNode *tail = list->tail;
+
+    // 新链表尾节点
+    list->tail = tail->prev;
+    list->tail->next = NULL;
+
+    // 新头节点
+    list->head->prev = tail;
+    tail->prev = NULL;
+    tail->next = list->head;
+    list->head = tail;
+}
+
+
+// 判断字符串是否相等
+
+/**
+ * 字符串 str1 与 str2 是否相等
+ * 
+ * 返回 相等返回 1
+ *      不等返回 0
+ */
+int keyMatch(void *str1,void *str2){
+    return (strcmp(str1,str2))==0 ? 1 : 0;
+}
+
 void printList(list *li) {
     printf("li size is %d, elements:", listLength(li));
     listIter iter;
@@ -196,37 +491,70 @@ void printList(list *li) {
 int main(void){
 
     char b[][10] = {"believe", "it", "or", "not"};
-    // listIter iter;
+    listIter iter;
     listNode *node;
-    list *list = listCreate();
+    list *li = listCreate();
 
     // 表头添加，结果：li size is 4, elements:not or it believe
     for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
-        listAddNodeHead(list, b[i]);
+        listAddNodeHead(li, b[i]);
     }
-    printList(list);
+    printf("listAddNodeHead : ");
+    printList(li);
 
-    listRelease(list);
-    list = listCreate();
+    listRelease(li);
+    li = listCreate();
     // 表尾添加, 结果：li size is 4, elements:believe it or not
     for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
-        listAddNodeTail(list, b[i]);
+        listAddNodeTail(li, b[i]);
     }
-    printList(list);
+    printf("listAddNodeTail : ");
+    printList(li);
 
+    printf("search a key :");
+    listSetMatchMethod(li, keyMatch);
+    listNode *ln = listSearchKey(li, "it");
+    if (ln != NULL) {
+        printf("find key is :%s\n", (char*)ln->value);
+    } else {
+        printf("not found\n");
+    }
 
-    
+    // 插入节点
+    li = listInsertNode(li,ln,"insert1",1);
+    printList(li);
 
-    // printf("\nSearch a key :\n");
-    // listSetMatchMethod(li, keyMatch);
-    // listNode *ln = listSearchKey(li, "believe");
-    // if (ln != NULL) {
-    //     printf("find key is :%s\n", (char*)ln->value);
-    // } else {
-    //     printf("not found\n");
-    // }
+    // 插入头节点
+    printf("head insert node: ");
+    ln = listSearchKey(li,"believe");
+    li = listInsertNode(li,ln,"insertHead",0);
+    printList(li);
 
-    // printf("\nReverse output the list :\n");
+    // 删除节点
+    printf("del node : ");
+    listDelNode(li,ln);
+    printList(li);
+
+    // 删除头节点
+    printf("del head node : ");
+    ln = listSearchKey(li,"insertHead");
+    listDelNode(li,ln);
+    printList(li);
+
+    // 索引搜索节点
+    ln = listIndex(li,-1);
+    if (ln) {
+        printf("listIndex : %s \n",ln->value);
+    } else {
+        printf("listIndex : NULL");
+    }
+
+    // 表尾变表头
+    listRotate(li);
+    printList(li);
+
+    // // 反转链表
+    // printf("reverse output the list : ");
     // printf("li size is %d, elements:", listLength(li));
     // listRewindTail(li, &iter);
     // while ((node = listNext(&iter)) != NULL) {
@@ -234,17 +562,15 @@ int main(void){
     // }
     // printf("\n");
 
-    // printf("\nduplicate a new list :\n");
+    // // 复制链表
+    // printf("duplicate a new list : ");
     // list *lidup = listDup(li);
     // printList(lidup);
 
-
-    // printf("\nConnect two linked lists :\n");
-    // listJoin(li, lidup);
-    // printList(li);
+    
 
 
-    // listRelease(li);
+    listRelease(li);
 
     return 0;
 }

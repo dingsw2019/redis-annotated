@@ -61,6 +61,10 @@ typedef struct list {
  */
 #define listLength(l) ((l)->len)
 
+// 将链表的对比函数设置为 m
+// T = O(1)
+#define listSetMatchMethod(l,m) ((l)->match = (m))
+
 /**
  * 迭代器进行迭代的方向
  */
@@ -70,4 +74,6 @@ typedef struct list {
 // 从表尾向表头进行迭代
 #define AL_START_TAIL 1
 
+
+listNode *listSearchKey(list *list,void *key);
 #endif
