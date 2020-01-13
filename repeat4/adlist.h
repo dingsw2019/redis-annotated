@@ -28,6 +28,8 @@ typedef struct listIter {
 
 #define listLength(l) ((l)->len)
 
+#define listSetMatchMethod(l,m) ((l)->match = (m))
+
 #define AL_START_HEAD 0
 
 #define AL_START_TAIL 1 
