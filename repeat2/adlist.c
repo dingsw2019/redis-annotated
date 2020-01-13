@@ -112,6 +112,11 @@ void listRewind(list *list,listIter *iter){
     iter->direction = AL_START_HEAD;
 }
 
+void listRewindTail(list *list,listIter *iter){
+    iter->next = list->tail;
+    iter->direction = AL_START_TAIL;
+}
+
 // 构建指定链表的迭代器
 listIter *listGetIterator(list *list,int direction){
     // 申请迭代器的内存
@@ -128,7 +133,7 @@ listIter *listGetIterator(list *list,int direction){
     return iter;
 }
 
-// listNode *listNextNode(listIter *iter){
+// listNode *listNext(listIter *iter){
 //     listNode *current = iter->next;
 //     if (iter->direction == AL_START_HEAD) {
 //         iter->next = current->next;
@@ -294,6 +299,121 @@ void listDelNode(list *list,listNode *node){
     list->len--;
 }
 
+// 按索引顺序获取节点
+listNode *listIndex(list *list,long index){
+    
+    listNode *node;
+    // 倒叙变正序
+    if (index < 0) {
+        node = list->tail;
+        index = (-index)-1;
+        while (index-- && node) node = node->prev;
+    } else {
+        node = list->head;
+        while (index-- && node) node = node->next;
+    }
+
+    return node;
+}
+
+// 复制链表
+// list *listDup(list *li){
+
+//     list *copy;
+//     listIter *iter;
+//     listNode *node;
+
+//     // 申请链表内存
+//     if ((copy=zmalloc(sizeof(*copy))) == NULL) return NULL;
+
+//     // 申请迭代器
+//     iter = listGetIterator(li,AL_START_HEAD);
+
+//     // 遍历链表,添加节点
+//     while((node=listNext(iter)) != NULL){
+//         void *value;
+//         if (li->dup) 
+//             value = li->dup(node->value);
+//         else
+//             value = node->value;
+
+//         // 添加节点
+//         if(listAddNodeTail(copy,value) == NULL){
+//             // 失败,释放内存
+//             listRelease(copy);
+//             listReleaseIterator(iter);
+//             return NULL;
+//         }
+//     }
+
+//     // 释放迭代器
+//     listReleaseIterator(iter);
+
+//     return copy;
+// }
+
+list *listDup(list *orig){
+
+    list *copy;
+    listIter *iter;
+    listNode *node;
+
+    // 申请链表内存
+    if ((copy=listCreate()) == NULL) 
+        return NULL;
+
+    copy->dup = orig->dup;
+    copy->free = orig->free;
+    copy->match = orig->match;
+
+    // 申请迭代器
+    iter = listGetIterator(orig,AL_START_HEAD);
+
+    // 遍历链表,添加节点
+    while((node=listNext(iter)) != NULL){
+        void *value;
+        if (copy->dup){
+            value = copy->dup(node->value);
+            if (value == NULL) {
+                listRelease(copy);
+                listReleaseIterator(iter);
+                return NULL;
+            }
+        } else
+            value = node->value;
+
+        // 添加节点
+        if(listAddNodeTail(copy,value) == NULL){
+            // 失败,释放内存
+            listRelease(copy);
+            listReleaseIterator(iter);
+            return NULL;
+        }
+    }
+
+    // 释放迭代器
+    listReleaseIterator(iter);
+    
+    return copy;
+}
+
+list *listRotate(list *list){
+
+    listNode *tail = list->tail;
+
+    // 尾节点调整
+    list->tail = tail->prev;
+    list->tail->next = NULL;
+
+    // 头节点调整
+    tail->prev = NULL;
+    tail->next = list->head;
+    list->head->prev = tail;
+    list->head = tail;
+
+    return list;
+}
+
 // 字符串是否相等，相等返回 1 ，不等返回 0
 int keyMatch(void *str1,void *str2){
     return (strcmp(str1,str2)==0) ? 1 : 0; 
@@ -377,31 +497,31 @@ int main(void){
     listDelNode(li,ln);
     printList(li);
 
-    // // 索引搜索节点
-    // ln = listIndex(li,-1);
-    // if (ln) {
-    //     printf("listIndex : %s \n",ln->value);
-    // } else {
-    //     printf("listIndex : NULL");
-    // }
+    // 索引搜索节点
+    ln = listIndex(li,2);
+    if (ln) {
+        printf("listIndex : %s \n",ln->value);
+    } else {
+        printf("listIndex : NULL");
+    }
 
-    // // 表尾变表头
-    // listRotate(li);
-    // printList(li);
+    // 表尾变表头
+    listRotate(li);
+    printList(li);
 
-    // // 反转链表
-    // printf("reverse output the list : ");
-    // printf("li size is %d, elements:", listLength(li));
-    // listRewindTail(li, &iter);
-    // while ((node = listNext(&iter)) != NULL) {
-    //     printf("%s ", (char*)node->value);
-    // }
-    // printf("\n");
+    // 反转链表
+    printf("reverse output the list : ");
+    printf("li size is %d, elements:", listLength(li));
+    listRewindTail(li, &iter);
+    while ((node = listNext(&iter)) != NULL) {
+        printf("%s ", (char*)node->value);
+    }
+    printf("\n");
 
-    // // 复制链表
-    // printf("duplicate a new list : ");
-    // list *lidup = listDup(li);
-    // printList(lidup);
+    // 复制链表
+    printf("duplicate a new list : ");
+    list *lidup = listDup(li);
+    printList(lidup);
 
     // listRelease(li);
 

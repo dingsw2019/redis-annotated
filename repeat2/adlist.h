@@ -46,7 +46,7 @@ typedef struct list {
     listNode *tail;
 
     // 复制,释放,比较函数
-    void (*dup)(void *ptr);
+    void *(*dup)(void *ptr);
 
     void (*free)(void *ptr);
 
@@ -68,9 +68,20 @@ typedef struct list {
 // 从表尾向表头
 #define AL_START_TAIL 1
 
-void listReleaseIterator(listIter *iter);
+list *listCreate(void);
+void listRelease(list *list);
+list *listAddNodeHead(list *list,void *value);
+list *listAddNodeTail(list *list,void *value);
+void listRewind(list *list,listIter *iter);
+void listRewindTail(list *list,listIter *iter);
 listIter *listGetIterator(list *list,int direction);
+listNode *listNext(listIter *iter);
+void listReleaseIterator(listIter *iter);
 listNode *listSearchKey(list *list,void *key);
 list *listInsertNode(list *list,listNode *old_node,void *value,int after);
+void listDelNode(list *list,listNode *node);
+listNode *listIndex(list *list,long index);
+list *listDup(list *orig);
+list *listRotate(list *list);
 
 #endif
