@@ -59,10 +59,18 @@ typedef struct list {
 // #define listLength(l) (l)->len;
 #define listLength(l) ((l)->len)
 
+// #define listSetMatchMethod(l,match) ((l)->match)
+#define listSetMatchMethod(l,m) ((l)->match = (m))
+
 // 从表头向表尾
 #define AL_START_HEAD 0
 
 // 从表尾向表头
 #define AL_START_TAIL 1
+
+void listReleaseIterator(listIter *iter);
+listIter *listGetIterator(list *list,int direction);
+listNode *listSearchKey(list *list,void *key);
+list *listInsertNode(list *list,listNode *old_node,void *value,int after);
 
 #endif
