@@ -1,3 +1,16 @@
+/**
+ * 
+ * 双端链表作用
+ *   1.作为 Redis 列表类型的底层结构之一
+ *   2.作为通用数据结构，被其他功能模块所使用
+ * 
+ * 双端链表及其节点的性能特征
+ *   1.节点有指向前后节点的指针,访问前后节点的复杂度为O(1),
+ *      并且可以从表头迭代到表尾或表尾迭代到表头
+ *   2.链表有表头和表尾指针,因此对表头或表尾处理的复杂度为O(1)
+ *   3.链表有节点数量的属性,可在O(1)复杂度内返回节点数
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -236,27 +249,28 @@ void listDelNode(list *list,listNode *node){
     list->len--;
 }
 
-
 /**
- * 将迭代器的方向设置为 从表头向表尾迭代
- * 并将迭代指针重新指向表头节点
+ * 为指定链表创建一个迭代器
+ * 同时指定方向，迭代时使用
  * 
  * T = O(1)
  */
-void listRewind(list *list,listIter *li){
-    li->next = list->head;
-    li->direction = AL_START_HEAD;
-}
+listIter *listGetIterator(list *list,int direction){
 
-/**
- * 将迭代器的方向设置为 从表尾到表头
- * 并将迭代指针重新指向表尾节点
- * 
- * T = O(1)
- */
-void *listRewindTail(list *list,listIter *li){
-    li->next = list->tail;
-    li->direction = AL_START_TAIL;
+    // 为迭代器分配内存
+    listIter *iter;
+    if ((iter=zmalloc(sizeof(*iter))) == NULL) return NULL;
+    
+    // 根据迭代方向，设置迭代器的起始节点
+    if (direction == AL_START_HEAD)
+        iter->next = list->head;
+    else 
+        iter->next = list->tail;
+    
+    // 记录迭代方向
+    iter->direction = direction;
+
+    return iter;
 }
 
 
@@ -283,29 +297,6 @@ listNode *listNext(listIter *iter){
     return current;
 }
 
-/**
- * 为指定链表创建一个迭代器
- * 同时指定方向，迭代时使用
- * 
- * T = O(1)
- */
-listIter *listGetIterator(list *list,int direction){
-
-    // 为迭代器分配内存
-    listIter *iter;
-    if ((iter=zmalloc(sizeof(*iter))) == NULL) return NULL;
-    
-    // 根据迭代方向，设置迭代器的起始节点
-    if (direction == AL_START_HEAD)
-        iter->next = list->head;
-    else 
-        iter->next = list->tail;
-    
-    // 记录迭代方向
-    iter->direction = direction;
-
-    return iter;
-}
 
 /**
  * 释放迭代器
@@ -443,6 +434,28 @@ listNode *listIndex(list *list,long index) {
 }
 
 /**
+ * 将迭代器的方向设置为 从表头向表尾迭代
+ * 并将迭代指针重新指向表头节点
+ * 
+ * T = O(1)
+ */
+void listRewind(list *list,listIter *li){
+    li->next = list->head;
+    li->direction = AL_START_HEAD;
+}
+
+/**
+ * 将迭代器的方向设置为 从表尾到表头
+ * 并将迭代指针重新指向表尾节点
+ * 
+ * T = O(1)
+ */
+void *listRewindTail(list *list,listIter *li){
+    li->next = list->tail;
+    li->direction = AL_START_TAIL;
+}
+
+/**
  * 将链表尾节点，移动为表头节点
  * 
  * T = O(1)
@@ -463,9 +476,6 @@ void listRotate(list *list){
     list->head = tail;
 }
 
-
-// 判断字符串是否相等
-
 /**
  * 字符串 str1 与 str2 是否相等
  * 
@@ -476,6 +486,7 @@ int keyMatch(void *str1,void *str2){
     return (strcmp(str1,str2))==0 ? 1 : 0;
 }
 
+// 打印链表的所有节点
 void printList(list *li) {
     printf("li size is %d, elements:", listLength(li));
     listIter iter;
@@ -553,22 +564,19 @@ int main(void){
     listRotate(li);
     printList(li);
 
-    // // 反转链表
-    // printf("reverse output the list : ");
-    // printf("li size is %d, elements:", listLength(li));
-    // listRewindTail(li, &iter);
-    // while ((node = listNext(&iter)) != NULL) {
-    //     printf("%s ", (char*)node->value);
-    // }
-    // printf("\n");
+    // 反转链表
+    printf("reverse output the list : ");
+    printf("li size is %d, elements:", listLength(li));
+    listRewindTail(li, &iter);
+    while ((node = listNext(&iter)) != NULL) {
+        printf("%s ", (char*)node->value);
+    }
+    printf("\n");
 
-    // // 复制链表
-    // printf("duplicate a new list : ");
-    // list *lidup = listDup(li);
-    // printList(lidup);
-
-    
-
+    // 复制链表
+    printf("duplicate a new list : ");
+    list *lidup = listDup(li);
+    printList(lidup);
 
     listRelease(li);
 
