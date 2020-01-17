@@ -168,10 +168,128 @@ listNode *listNext(listIter *iter){
 // 表尾节点移动到表头
 list *listRotate(list *list){
 
+    listNode *tail = list->tail;
+
+    // 表尾指针变更
+    tail->prev->next = NULL;
+    list->tail = tail->prev;
+
+    // 节点指针变更
+    tail->prev = NULL;
+    tail->next = list->head;
+
+    // 表头指针变更
+    list->head->prev = tail;
+    list->head = tail;
+
+    return list;
+}
+
+// 匹配 value
+listNode *listSearchKey(list *list,void *key){
+    
+    listIter *iter = listGetIterator(list,AL_START_HEAD);
+    listNode *node;
+
+    while((node=listNext(iter)) != NULL){
+
+        if (list->match) {
+            if (list->match(node->value,key)) {
+                listReleaseIterator(iter);
+                return node;
+            }
+        } else {
+            if (node->value == key){
+                listReleaseIterator(iter);
+                return node;
+            }
+        }
+    }
+
+    listReleaseIterator(iter);
+    return NULL;
+}
+
+list *listInsertNode(list *list,listNode *old_node,void *value,int after){
+
+    listNode *node;
+    // 创建节点
+    if ((node = zmalloc(sizeof(*node))) == NULL)
+        return NULL;
+    node->value = value;
+
+    // 已有节点之后添加新节点
+    if (after) {
+        node->prev = old_node;
+        node->next = old_node->next;
+        if (list->tail == old_node) {
+            list->tail = node;
+        }
+    // 已有节点之前添加新节点
+    } else {
+        node->prev = old_node->prev;
+        node->next = old_node;
+        if (list->head == old_node) {
+            list->head = node;
+        }
+    }
+
+    // 新节点的前置节点修改
+    if (node->prev != NULL) {
+        node->prev->next = node;
+    }
+
+    // 新节点的后置节点修改
+    if (node->next != NULL) {
+        node->next->prev = node;
+    }
+
+    list->len++;
+
+    return list;
+}
+
+void listDelNode(list *list,listNode *node){
+
+    // 前置节点指针变更
+    if (node->prev) {
+        node->prev->next = node->next;
+    } else {
+        list->head = node->next;
+    }
+    // 后置节点指针变更
+    if (node->next) {
+        node->next->prev = node->prev;
+    } else {
+        list->tail = node->prev;
+    }
+
+    list->len--;
+}
+
+listNode *listIndex(list *list,int index){
+
+    listNode *n;
+    // 负数转正数
+    if (index < 0) {
+        index  = (-index)+1;
+        n = list->tail;
+        while(index-- && n) n = n->prev;
+    } else {
+        n = list->head;
+        while(index-- && n) n = n->next;
+    }
+
+    return n;
+}
+
+void listRewindTail(list *list,listIter *iter){
+    iter->next = list->tail;
+    iter->direction = AL_START_TAIL;
 }
 
 // 自定义比对函数
-int matchKey(void *str1,void *str2){
+int keyMatch(void *str1,void *str2){
     return (strcmp(str1,str2)==0) ? 1 : 0;
 }
 
@@ -179,7 +297,7 @@ int matchKey(void *str1,void *str2){
 void printList(list *list){
     listIter *iter = listGetIterator(list,AL_START_HEAD);
     listNode *node;
-    printf("list size %d , elements : ");
+    printf("list size %d , elements : ",listLength(list));
     while((node = listNext(iter)) != NULL){
         printf("%s ",node->value);
     }
@@ -217,57 +335,58 @@ int main(void){
     printList(lidup);
 
     // 表尾移动到表头
+    printf("list rotate : ");
     listRotate(li);
     printList(li);
 
-    // // // 插入节点
-    // listSetMatchMethod(li, keyMatch);
-    // listNode *ln = listSearchKey(li, "it");
-    // printf("find key is :%s\n", (char*)ln->value);
-    // li = listInsertNode(li,ln,"insert1",1);
-    // printList(li);
+    // 插入节点
+    listSetMatchMethod(li, keyMatch);
+    listNode *ln = listSearchKey(li, "it");
+    printf("find key is :%s\n", (char*)ln->value);
+    li = listInsertNode(li,ln,"insert1",1);
+    printList(li);
 
-    // // 插入头节点
-    // printf("head insert node: ");
-    // ln = listSearchKey(li,"not");
-    // li = listInsertNode(li,ln,"insertHead",0);
-    // printList(li);
+    // 插入头节点
+    printf("head insert node: ");
+    ln = listSearchKey(li,"not");
+    li = listInsertNode(li,ln,"insertHead",0);
+    printList(li);
 
-    // // 删除节点
-    // printf("del 'not' node : ");
-    // listDelNode(li,ln);
-    // printList(li);
+    // 删除节点
+    printf("del 'not' node : ");
+    listDelNode(li,ln);
+    printList(li);
 
-    // // 删除头节点
-    // printf("del head node : ");
-    // ln = listSearchKey(li,"insertHead");
-    // listDelNode(li,ln);
-    // printList(li);
+    // 删除头节点
+    printf("del head node : ");
+    ln = listSearchKey(li,"insertHead");
+    listDelNode(li,ln);
+    printList(li);
 
-    // // 删除尾节点
-    // printf("del tail node : ");
-    // ln = listSearchKey(li,"or");
-    // listDelNode(li,ln);
-    // printList(li);
+    // 删除尾节点
+    printf("del tail node : ");
+    ln = listSearchKey(li,"or");
+    listDelNode(li,ln);
+    printList(li);
 
-    // // 索引搜索节点
-    // ln = listIndex(li,2);
-    // if (ln) {
-    //     printf("listIndex 2 value : %s \n",ln->value);
-    // } else {
-    //     printf("listIndex 2 value : NULL");
-    // }
+    // 索引搜索节点
+    ln = listIndex(li,2);
+    if (ln) {
+        printf("listIndex 2 value : %s \n",ln->value);
+    } else {
+        printf("listIndex 2 value : NULL");
+    }
 
-    // // 反转链表
-    // printf("reverse output the list : ");
-    // printf("li size is %d, elements: ", listLength(li));
-    // listRewindTail(li, &iter);
-    // while ((node = listNext(&iter)) != NULL) {
-    //     printf("%s ", (char*)node->value);
-    // }
-    // printf("\n");
+    // 反转链表
+    printf("reverse output the list : ");
+    printf("li size is %d, elements: ", listLength(li));
+    listRewindTail(li, &iter);
+    while ((node = listNext(&iter)) != NULL) {
+        printf("%s ", (char*)node->value);
+    }
+    printf("\n");
 
-    // listRelease(li);
+    listRelease(li);
 
     return 0;
 }
