@@ -173,14 +173,13 @@ listNode *listSearchKey(list *list,void *key){
 
     iter = listGetIterator(list,AL_START_HEAD);
     while((node = listNext(iter)) != NULL){
-        void *value;
         if (list->match) {
             if(list->match(node->value,key)){
                 listReleaseIterator(iter);
                 return node;
             }
         } else {
-            if (value == node->value) {
+            if (key == node->value) {
                 listReleaseIterator(iter);
                 return node;
             }
