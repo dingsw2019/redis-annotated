@@ -110,6 +110,8 @@ void zfree(void *ptr){
     void *realptr;
     size_t oldsize;
 
+    if (ptr == NULL) return ;
+
     realptr = (char*)ptr-PREFIX_SIZE;
     oldsize = *((size_t*)realptr);
 
