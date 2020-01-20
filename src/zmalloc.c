@@ -149,6 +149,8 @@ void zfree(void *ptr){
     //结构体的大小,不是块的大小,块=数据头+sdshdr结构体
     size_t oldsize;
 
+    if (ptr == NULL) return;
+
     //找到分配空间的开始位置
     realptr = (char*)ptr-PREFIX_SIZE;
     //获取sdshdr结构体的大小

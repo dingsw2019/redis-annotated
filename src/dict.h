@@ -3,10 +3,22 @@
 #ifndef __DICT_H
 #define __DICT_H
 
+/**
+ * 字典的操作状态
+ */
+// 操作成功
+#define DICT_OK 0
+// 操作失败或出错
+#define DICT_ERR 1
+
+// 如果字典的私有数据不使用
+// 用这个宏来避免编译器错误
+#define DICT_NOTUSED(V) ((void) V)
+
 // 哈希表节点
 typedef struct dictEntry {
     // 键
-    void *key
+    void *key;
 
     // 值
     union {
@@ -24,17 +36,17 @@ typedef struct dictEntry {
 typedef struct dictType {
 
     // 计算哈希值
-    unsigned int (*dictFunction)(void *privdata,const void *key);
+    unsigned int (*hashFunction)(const void *key);
     // 复制键
     void (*keyDup)(void *privdata,const void *key);
     // 复制值
-    void (*valDup)(void *privdata, void *obj);
+    void (*valDup)(void *privdata, const void *obj);
     // 对比键
-    int (*keyDup)(void *privdata,const void *key1, const void *key2);
+    int (*keyCompare)(void *privdata,const void *key1, const void *key2);
     // 销毁键
-    void (*keyDestructer)(void *privdata,const void *key);
+    void (*keyDestructor)(void *privdata, void *key);
     // 销毁值
-    void (*valDestructer)(void *privdata, void *obj);
+    void (*valDestructor)(void *privdata, void *obj);
 
 } dictType;
 
@@ -111,5 +123,36 @@ typedef struct dictIterator {
 
     long long fingerprint;
 } dictIterator;
+
+// 释放给定字典节点的值
+#define dictFreeVal(d, entry) \
+    if ((d)->type->valDestructor) \
+        (d)->type->valDestructor((d)->privdata, (entry)->v.val)
+
+// 设置给定字典节点的值
+#define dictSetVal(d, entry, _val_) do { \
+    if((d)->type->valDup) \
+        entry->v.val = (d)->type->valDup((d)->privdata, _val); \
+    else \
+        entry->v.val = (_val_); \
+}while(0)
+
+// 释放给定字典节点的键
+#define dictFreeKey(d, entry) \
+    if ((d)->type->keyDestructor) \
+        (d)->type->keyDestructor((d)->privdata, (entry)->key)
+
+// 设置给定字典节点的键
+#define dictSetKey(d, entry, _key_) do { \
+    if ((d)->type->keyDup) \
+        entry->key = (d)->type->keyDup((d)->privdata, _key_); \
+    else \
+        entry->key = (_key_); \
+}while(0)
+
+// 查看字典是否正在 rehash
+#define dictIsRehashing(ht) ((ht)->rehashidx != -1)
+
+dict *dictCreate(dictType *type,void *privDataPtr);
 
 #endif
