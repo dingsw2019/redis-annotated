@@ -38,9 +38,9 @@ typedef struct dictType {
     // 计算哈希值
     unsigned int (*hashFunction)(const void *key);
     // 复制键
-    void (*keyDup)(void *privdata,const void *key);
+    void *(*keyDup)(void *privdata,const void *key);
     // 复制值
-    void (*valDup)(void *privdata, const void *obj);
+    void *(*valDup)(void *privdata, const void *obj);
     // 对比键
     int (*keyCompare)(void *privdata,const void *key1, const void *key2);
     // 销毁键
@@ -124,6 +124,9 @@ typedef struct dictIterator {
     long long fingerprint;
 } dictIterator;
 
+// 哈希表的初始大小
+#define DICT_HT_INITIAL_SIZE 4
+
 // 释放给定字典节点的值
 #define dictFreeVal(d, entry) \
     if ((d)->type->valDestructor) \
@@ -132,7 +135,7 @@ typedef struct dictIterator {
 // 设置给定字典节点的值
 #define dictSetVal(d, entry, _val_) do { \
     if((d)->type->valDup) \
-        entry->v.val = (d)->type->valDup((d)->privdata, _val); \
+        entry->v.val = (d)->type->valDup((d)->privdata, _val_); \
     else \
         entry->v.val = (_val_); \
 }while(0)
@@ -150,9 +153,22 @@ typedef struct dictIterator {
         entry->key = (_key_); \
 }while(0)
 
+// 比对两个键
+#define dictCompareKeys(d, key1, key2) \
+    (((d)->type->keyCompare) ? \
+        (d)->type->keyCompare((d)->privdata,key1,key2) : \
+        (key1) == (key2))
+
+// 计算给定键的哈希值
+#define dictHashKey(d,key) (d)->type->hashFunction(key)
+// 返回字典已有的节点数量
+#define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
 // 查看字典是否正在 rehash
 #define dictIsRehashing(ht) ((ht)->rehashidx != -1)
 
 dict *dictCreate(dictType *type,void *privDataPtr);
+int dictAdd(dict *d,void *key,void *val);
+dictEntry *dictAddRaw(dict *d,void *key);
+int dictExpand(dict *d,unsigned long size);
 
 #endif
