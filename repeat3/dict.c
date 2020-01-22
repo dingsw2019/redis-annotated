@@ -12,10 +12,11 @@
 
 #include <assert.h>
 #include "fmacros.h"
-#include "intdicttype.h"
+
+#include "dictType.h"
 
 
-extern dictType intDictType;
+extern dictType initDictType;
 
 static int dict_can_resize = 1;
 static int dict_force_resize_ratio = 5;
@@ -301,30 +302,25 @@ int dictAdd(dict *d,void *key,void *val){
 
 void test_empty_dict(void)
 {
-    dict* d = dictCreate(&intDictType, NULL);
+    // dict* d = dictCreate(&intDictType, NULL);
 
-    dictRelease(d);
+    // dictRelease(d);
 }
 
 void test_add_and_delete_key_value_pair(void)
 {
     // 创建新字典
-    dict *d = dictCreate(&intDictType, NULL);
+    dict *d = dictCreate(&initDictType, NULL);
 
     // 创建键和值
-    KeyObject *k = create_key();
-    k->value = 1;
-    ValueObject *v = create_value();
-    v->value = 10086;
+    objectKey *k = keyCreate(1);
+    objectVal *v = valCreate(10086);
 
     // 添加键值对
     dictAdd(d, k, v);
 
+    // 哈希表大小应为 1
     printf("dictAdd : dict size %d",dictSize(d));
-
-    // assert(
-    //     dictSize(d) == 1
-    // );
 
     // assert(
     //     dictFind(d, k) != NULL

@@ -85,6 +85,8 @@ void zfree(void *ptr){
     void *realptr = (char*)ptr-PREFIX_SIZE;
     size_t oldsize;
 
+    if (ptr == NULL) return ;
+
     // 获取申请内存大小
     oldsize = *((size_t*)realptr);
 
