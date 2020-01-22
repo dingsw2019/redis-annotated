@@ -128,6 +128,7 @@ void zfree(void *sh){
     size_t oldsize;
     void *oldptr;
 
+    if (sh == NULL) return;
     //内存起始地址,内存申请大小
     oldptr = (char*)sh-PREFIX_SIZE;
     oldsize = *((size_t*)oldptr);
