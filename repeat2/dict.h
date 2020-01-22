@@ -31,9 +31,9 @@ typedef struct dictType{
     // 计算哈希值的函数
     unsigned int (*hashFunction)(const void *key);
     // 复制键的函数
-    void (*keyDup)(void *privdata, const void *key);
+    void *(*keyDup)(void *privdata, const void *key);
     // 复制值的函数
-    void (*valDup)(void *privdata, const void *obj);
+    void *(*valDup)(void *privdata, const void *obj);
     // 对比键的函数
     int (*keyCompare)(void *privdata,const void *key1,const void *key2);
     // 销毁键的函数
@@ -82,7 +82,24 @@ typedef struct dictIterator {
     long long fingerprint;
 } dictIterator;
 
+#define DICT_HT_INIT_SIZE 4
+// 计算 hash 值
+// #define dictHashFunction(key) \
+//     if ((d)->type->hashFunction) \
+//         (d)->type->hashFunction(key)
+#define dictHashKey(d,key) (d)->type->hashFunction(key)
 
+// 对比值
+// #define dictCompareKey(d,key1,key2) do{ \
+//     if ((d)->type->keyCompare) \
+//         (d)->type->keyCompare((d)->privdata,key1,key2); \
+//     else \
+//         (key1 == key2); \
+// }while(0)
+#define dictCompareKeys(d,key1,key2) \
+    ((d)->type->keyCompare) ? \
+        (d)->type->keyCompare((d)->privdata,key1,key2) : \
+        (key1) == (key2)
 
 // 销毁节点的值
 #define dictFreeVal(d, entry) \
@@ -110,7 +127,12 @@ typedef struct dictIterator {
         entry->key = (_key_); \
 }while(0)
 
+
+#define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
+
 // 是否正rehash
 #define dictIsRehash(d) ((d)->rehashidx != -1)
+
+int dictExpand(dict *d,unsigned long size);
 
 #endif
