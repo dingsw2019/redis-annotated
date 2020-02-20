@@ -8,7 +8,8 @@
 		"files.associations": {
 			"stdio.h": "c",
 			"cstdarg": "cpp",
-			"zmalloc.h": "c"
+			"zmalloc.h": "c",
+			"intdicttype.h": "c"
 		}
 	}
 }
