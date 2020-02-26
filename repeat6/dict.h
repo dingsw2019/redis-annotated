@@ -7,6 +7,8 @@
 #define DICT_OK 0
 // 操作失败
 #define DICT_ERR 1
+// 避免编译器错误
+#define DICT_NOTUSED(V) ((void) V)
 
 // 节点
 typedef struct dictEntry
@@ -120,9 +122,9 @@ typedef struct dictIterator
         (key1) == (key2))
 
 // 计算哈希值
-#define dictHashKey(d,key) (d)->hashFunction(key)
+#define dictHashKey(d,key) (d)->type->hashFunction(key)
 // 已用节点数量
-#define dictSize(d) ((d)->ht[0]->used+(d)->ht[1]->used)
+#define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
 // 是否处于rehash状态
 #define dictIsRehashing(d) ((d)->rehashidx != -1)
 
