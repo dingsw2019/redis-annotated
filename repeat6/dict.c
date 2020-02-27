@@ -109,13 +109,46 @@ void dictRelease(dict *d){
 }
 
 // 扩容大小策略
-static unsigned int _dictNextPower(unsigned int size){
-
+static unsigned long _dictNextPower(unsigned long size){
+    unsigned long i = DICT_HT_INITIAL_SIZE;
+    if (size >= LONG_MAX) return LONG_MAX;
+    while(1){
+        if (i > size){
+            return i;
+        }
+        i *= 2;
+    }
 }
 
 // 扩容执行
-int dictExpand(dict *d,unsigned int size){
+int dictExpand(dict *d,unsigned long size){
+    unsigned long realsize;
+    dictht n;
+    // 计算扩容大小
+    realsize = _dictNextPower(size);
+    // 不扩容情况
+    // 1.处于 rehash 状态 
+    // 2.哈希表已用节点数大于申请大小
+    if (dictIsRehashing(d) || d->ht[0].used > size)
+        return DICT_ERR;
 
+    // 申请内存
+    n.table = zcalloc(realsize*sizeof(dictEntry*));
+    // 哈希表属性赋值
+    n.size = realsize;
+    n.sizemask = realsize-1;
+    n.used = 0;
+
+    // 0 号哈希表为空,赋值给 0 号哈希表
+    if (d->ht[0].size == 0) {
+        d->ht[0] = n;
+        return DICT_OK;
+    }
+
+    // 0 号哈希表非空,赋值给 1 号哈希表,并开启 rehash
+    d->ht[1] = n;
+    d->rehashidx = 0;
+    return DICT_OK;
 }
 
 // 哈希表扩容控制策略
@@ -128,7 +161,7 @@ static int _dictExpandIfNeeded(dict *d){
     // 已用大小超过设置大小 同时
     // 启动强制扩容 或 哈希表使用率大于强制扩容设置的使用率
     // 进行 2 倍扩容
-    if (d->ht[0].used > d->ht[0].size && 
+    if (d->ht[0].used >= d->ht[0].size && 
         (dict_can_resize || 
         (d->ht[0].used/d->ht[0].size)>dict_force_resize_ratio))
     {
