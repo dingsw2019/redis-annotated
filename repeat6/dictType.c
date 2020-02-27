@@ -3,62 +3,51 @@
 #include "dict.h"
 #include "dictType.h"
 
-// 创建一个键,并指定该键的哈希表索引值
+// 创建一个节点的键
 keyObject *keyCreate(int index){
+
     keyObject *k = zmalloc(sizeof(*k));
     k->val = index;
     return k;
 }
 
-// 销毁指定键
-void keyRelease(keyObject *k){
-    zfree(k);
-}
+// 创建一个节点的值
+valObject *valCreate(int index){
 
-// 创建一个值,并制定该值的值
-valObject *valCreate(int val){
     valObject *v = zmalloc(sizeof(*v));
-    v->val = val;
+    v->val = index;
     return v;
 }
 
-// 销毁指定值
-void valRelease(valObject *v){
-    zfree(v);
-}
-
-// 根据 key 获取哈希值的自定义函数
+// 计算哈希值
 unsigned int keyHashIndex(const void *key){
     keyObject *k = (keyObject*)key;
     int val = k->val;
-    
     return (val < 0) ? 0-val : val;
 }
 
-// 比较两个节点键的自定义函数
+// 对比两个键
 int keyCompare(void *privdata,const void *key1,const void *key2){
     DICT_NOTUSED(privdata);
     keyObject *k1 = (keyObject*)key1;
     keyObject *k2 = (keyObject*)key2;
-
     return (k1->val == k2->val);
 }
 
-// 销毁键的自定义函数
+// 销毁节点的键
 void keyDestructor(void *privdata,void *key){
     DICT_NOTUSED(privdata);
     keyObject *k = (keyObject*)key;
-    keyRelease(k);
+    zfree(k);
 }
 
-// 销毁值的自定义函数
+// 销毁节点的值
 void valDestructor(void *privdata,void *val){
     DICT_NOTUSED(privdata);
     valObject *v = (valObject*)val;
-    valRelease(v);
+    zfree(v);
 }
 
-// 初始化字典自定义函数
 dictType initDictType = {
     keyHashIndex,
     NULL,
