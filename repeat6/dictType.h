@@ -1,13 +1,29 @@
-#include <stdlib.h>
+#ifndef _DICT_TYPE_H
+#define _DICT_TYPE_H
 
-// 节点的键
-typedef struct keyObject {
+// 键
+typedef struct keyObject 
+{
     int val;
 } keyObject;
-// 节点的值
-typedef struct valObject {
+
+// 值
+typedef struct valObject
+{
     int val;
 } valObject;
 
-keyObject *keyCreate(int index);
-valObject *valCreate(int index);
+
+// 创建键
+keyObject *keyCreate(int val);
+// 创建值
+valObject *valCreate(int val);
+// 销毁键
+void keyDestructor(void *privdata,void *key);
+// 销毁值
+void valDestructor(void *privdata,void *val);
+// 对比键
+int keyCompare(void *privdata,const void *key1,const void *key2);
+// 计算哈希值
+unsigned int keyHashIndex(const void *key);
+#endif
