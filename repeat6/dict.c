@@ -17,9 +17,11 @@
 
 extern dictType initDictType;
 
+// 启动强制扩容哈希表
 static int dict_can_resize = 1;
 
-static unsigned int dict_force_resize_ratio = 5;
+// 强制扩容哈希表,规定的哈希表使用率
+static int dict_force_resize_ratio = 5;
 
 //----------------------------------------
 
@@ -106,100 +108,65 @@ void dictRelease(dict *d){
     zfree(d);
 }
 
-// 扩容大小策略,返回第一个大于size的2的n次幂
-static unsigned long _dictNextPower(unsigned long size){
-    unsigned long i = DICT_HT_INITIAL_SIZE;
-    if (size >= LONG_MAX) return LONG_MAX;
-    while (1) {
-        if (i > size){
-            return i;
-        }
-        i *= 2;
-    }
-}
-
-// 扩容
-int dictExpand(dict *d,unsigned long size){
-
-    dictht n;
-    unsigned long realsize;
-    // 计算哈希表要扩容的大小
-    realsize = _dictNextPower(size);
-    // 不进行扩容的情况
-    // 1. 正在rehash
-    // 2. 0号哈希表已用节点数大于扩容节点数
-    if (dictIsRehashing(d) || d->ht[0].used > size)
-        return DICT_ERR;
-
-    // 哈希表参数赋值
-    n.table = zcalloc(realsize*sizeof(dictEntry*));
-    n.size = realsize;
-    n.sizemask = realsize-1;
-    n.used = 0;
-
-    // 如果 0 号哈希表为空,那么这是一次初始化
-    if (d->ht[0].table == NULL) {
-        d->ht[0] = n;
-        return DICT_OK;
-    }
-
-    // 如果 0 号哈希表非空,那么这是一次 rehash
-    d->ht[1] = n;
-    d->rehashidx = 0;
-    return DICT_OK;
+// 扩容大小策略
+static unsigned int _dictNextPower(unsigned int size){
 
 }
 
-// 扩容控制策略
+// 扩容执行
+int dictExpand(dict *d,unsigned int size){
+
+}
+
+// 哈希表扩容控制策略
 static int _dictExpandIfNeeded(dict *d){
 
-    // 处于 rehash 状态,不扩容
+    // rehash 状态,不进行扩容
     if (dictIsRehashing(d)) return DICT_ERR;
-    // 0 号哈希表为空,进行哈希表数组初始化内存的申请
-    if (d->ht[0].table == NULL) return dictExpand(d,DICT_HT_INITIAL_SIZE);
-
-    // 节点数量超过最大值 同时
-    // 启动强制扩容 或者 节点使用率超过 dict_force_resize_ratio
-    if (d->ht[0].used > d->ht[0].size &&
-         (dict_can_resize || 
-          d->ht[0].used/d->ht[0].size > dict_force_resize_ratio))
+    // 0 号哈希表为空,进行初始化扩容
+    if (d->ht[0].size == 0) return dictExpand(d,DICT_HT_INITIAL_SIZE);
+    // 已用大小超过设置大小 同时
+    // 启动强制扩容 或 哈希表使用率大于强制扩容设置的使用率
+    // 进行 2 倍扩容
+    if (d->ht[0].used > d->ht[0].size && 
+        (dict_can_resize || 
+        (d->ht[0].used/d->ht[0].size)>dict_force_resize_ratio))
     {
-        return dictExpand(d,d->ht[0].used*2);
+        return dictExpand(d,2*d->ht[0].used);
     }
-
     return DICT_OK;
 }
 
-// 获取键的哈希值, -1 表示键已存在
-static int dictKeyIndex(dict *d,const void *key){
+// 计算哈希值并检查该值是否存在
+// 存在返回 -1, 否则返回哈希值
+static int _dictKeyIndex(dict *d,const void *key){
 
-    int i;
     unsigned int h,table,idx;
     dictEntry *he;
 
-    // 扩容控制策略,不满足返回-1
-    if(_dictExpandIfNeeded(d) == DICT_ERR)
+    // 是否需要扩容
+    if (_dictExpandIfNeeded(d) == DICT_ERR)
         return -1;
 
     // 计算哈希值
     h = dictHashKey(d,key);
-
-    // 遍历哈希表,查找哈希值是否存在
-    // 存在返回 -1
+    // 遍历哈希表,查找哈希值是否存在,找到返回 -1
     for(table=0; table<=1; table++){
-
-        // 计算索引值,防止溢出
+        
+        // 检查哈希值,防止溢出
         idx = h & d->ht[table].sizemask;
-        // 查找节点
+        // 根据哈希值获取节点
         he = d->ht[table].table[idx];
+        
+        // 检查链表
         while(he){
-            if (dictCompareKey(d,key,he->key)) {
+            if (dictCompareKey(d,key,he->key)){
                 return -1;
             }
             he = he->next;
         }
 
-        // 非rehash,不需要搜索ht[1]
+        // 非 rehash 状态,不需要检查 1 号哈希表
         if (!dictIsRehashing(d)) break;
     }
 
@@ -207,44 +174,44 @@ static int dictKeyIndex(dict *d,const void *key){
     return idx;
 }
 
-// 增加节点的键
+// 添加节点的键,如果键已存在不添加
 dictEntry *dictAddRaw(dict *d,void *key){
 
     int index;
     dictEntry *entry;
     dictht *ht;
-    // 获取键的哈希值,-1 表示键已存在
-    if ((index = dictKeyIndex(d,key)) == -1)        
+
+    // 获取键的哈希值,如果返回 -1 代表键已存在
+    if((index = _dictKeyIndex(d,key)) == -1)
         return NULL;
-    
-    // 确认赋值的哈希表
+
+    // 选择添加新节点的哈希表
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
-    // 申请节点内存
+
+    // 新节点指针指向 NULL
     entry = zmalloc(sizeof(*entry));
-    // 节点指针赋值为NULL
     entry->next = ht->table[index];
-    // 新节点添加到链表表头
+    // 新节点添加到哈希表中
     ht->table[index] = entry;
-    // 更新已用节点数
+    // 更新哈希表已用节点数
     ht->used++;
     // 设置新节点的键
     dictSetKey(d,entry,key);
-
-    // 返回节点
+    // 返回新节点
     return entry;
 }
 
-// 增加节点
+// 添加节点
 int dictAdd(dict *d,void *key,void *val){
 
-    // 尝试添加键,如果键已存在,返回NULL
-    dictEntry *entry = dictAddRaw(d,key);
-
+    dictEntry *entry;
+    // 尝试添加节点的键
+    entry = dictAddRaw(d,key);
+    // 如果键已存在,不执行添加
     if (!entry) return DICT_ERR;
-
     // 设置节点的值
     dictSetVal(d,entry,val);
-
+    
     return DICT_OK;
 }
 
