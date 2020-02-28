@@ -128,6 +128,7 @@ typedef struct dictIterator {
 #define DICT_HT_INITIAL_SIZE 4
 
 // 释放给定字典节点的值
+// entry的括号不能省,否则 dictReplace 中报错
 #define dictFreeVal(d, entry) \
     if ((d)->type->valDestructor) \
         (d)->type->valDestructor((d)->privdata, (entry)->v.val)

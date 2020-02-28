@@ -243,6 +243,166 @@ int dictAdd(dict *d,void *key,void *val){
     return DICT_OK; 
 }
 
+/**
+ * 返回字典的键为 key 的节点
+ * 找到返回节点,未找到返回 NULL
+ * 
+ * T = O(N)
+ */
+dictEntry *dictFind(dict *d,void *key){
+
+    dictEntry *he;
+    unsigned long h,idx,table;
+
+    // 空字典,不进行查找
+    if (d->ht[0].size == 0) return NULL;
+
+    // 尝试进行单步 rehash
+    // if (dictIsRehashing(d)) _dictRehashStep(d);
+
+    // 计算键的哈希值
+    h = dictHashKey(d,key);
+
+    // 遍历哈希表
+    for(table=0; table<=1; table++){
+
+        // 计算索引值
+        idx = h & d->ht[table].sizemask;
+
+        // 遍历节点链表
+        he = d->ht[table].table[idx];
+        while(he){
+            // 查找相同 key
+            if (dictCompareKey(d,key,he->key))
+                return he;
+            
+            he = he->next;
+        }
+
+        // 非 rehash 状态, 不查 1 号哈希表
+        if (!dictIsRehashing(d)) break;
+    }
+
+    // 未找到
+    return NULL;
+}
+
+/**
+ * 将键值对添加到字典的哈希表数组
+ * 
+ * 如果键值对添加成功,返回 1
+ * 如果键已存在,替换该节点的val值,返回 0
+ * 
+ * T = O(N)
+ */
+int dictReplace(dict *d,void *key,void *val){
+
+    dictEntry *entry,auxentry;
+    // 尝试添加新节点,如果键不存在,添加成功
+    if(dictAdd(d,key,val) == DICT_OK)
+        return 1;
+
+    // 运行到这里,说明 key 已存在于数组中
+    // 找到 key 的节点
+    entry = dictFind(d,key);
+
+    // 保存旧值(val)的指针
+    auxentry = *entry;
+
+    // 设置新值(val)
+    dictSetVal(d,entry,val);
+
+    // 释放旧值
+    // 复制节点为保留旧值的首地址,设置新值(val)后,
+    // val 的地址就变了,也就无法释放了
+    dictFreeVal(d,&auxentry);
+
+    return 0;
+}
+
+/**
+ * 查找并释放给定键的节点
+ * 
+ * 参数 nofree 决定是否调用键和值的释放函数
+ * 0 调用 , 1 不调用
+ * 
+ * 找到并释放返回 DICT_OK
+ * 未找到返回 DICT_ERR
+ */
+int dictGenericDelete(dict *d,const void *key,int nofree){
+
+    unsigned long h,idx,table;
+    dictEntry *he,*prevHe;
+
+    // 空字典,返回
+    if (d->ht[0].size == 0) return DICT_ERR;
+    // 进行单步 rehash
+    // if (dictIsRehashing(d)) _dictRehashStep(d);
+
+    // 计算哈希值
+    h = dictHashKey(d,key);
+
+    // 遍历哈希表
+    for(table=0; table<=1; table++){
+
+        // 计算索引值
+        idx = h & d->ht[table].sizemask;
+
+        // 遍历节点链表
+        he = d->ht[table].table[idx];
+        prevHe = NULL;
+        while(he){
+            
+            // 找到相同节点键
+            if (dictCompareKey(d,key,he->key)) {
+
+                if (prevHe){
+                    // 删除链表非首节点
+                    // 更新删除节点的前一个节点指针
+                    // 指向删除节点的下一个节点
+                    prevHe->next = he->next;
+                } else {
+                    // 删除链表的第一个节点
+                    // 变更链表首地址为第一个节点
+                    d->ht[table].table = he->next;
+                }
+
+                if (!nofree) {
+                    // 释放键
+                    dictFreeKey(d,he);
+                    // 释放值
+                    dictFreeVal(d,he);
+                }
+                // 释放节点
+                zfree(he);
+                // 更新哈希表已用节点数
+                d->ht[table].used--;
+
+                return DICT_OK;
+            }
+            // 记录上一个节点
+            prevHe = he;
+            // 处理下一个节点
+            he = he->next;
+        }
+
+        // 非 rehash 状态,不查找 1 号哈希表
+        if (!dictIsRehashing(d)) break;
+    }
+
+    // 未找到
+    return DICT_ERR;
+}
+
+/**
+ * 从字典释放包含给定键的节点
+ * 释放返回 DICT_OK,未找到返回 DICT_ERR
+ * T = O(1)
+ */
+int dictDelect(dict *d,void *key){
+    return dictGenericDelete(d,key,0);
+}
+
 void test_empty_dict(void)
 {
     dict* d = dictCreate(&initDictType, NULL);

@@ -89,7 +89,7 @@ typedef struct dictIterator
 // 释放节点值
 #define dictFreeVal(d,entry) \
     if ((d)->type->valDestructor) \
-        (d)->type->valDestructor((d)->privdata,entry->v.val)
+        (d)->type->valDestructor((d)->privdata,(entry)->v.val)
 // 设置节点值
 #define dictSetVal(d,entry,_val_) do{ \
     if ((d)->type->valDup) \
@@ -100,7 +100,7 @@ typedef struct dictIterator
 // 释放节点键
 #define dictFreeKey(d,entry) \
     if ((d)->type->keyDestructor) \
-        (d)->type->keyDestructor((d)->privdata,entry->key)
+        (d)->type->keyDestructor((d)->privdata,(entry)->key)
 // 设置节点键
 #define dictSetKey(d,entry,_key_) do{ \
     if ((d)->type->keyDup) \
