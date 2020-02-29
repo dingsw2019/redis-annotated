@@ -364,7 +364,7 @@ int dictGenericDelete(dict *d,const void *key,int nofree){
                 } else {
                     // 删除链表的第一个节点
                     // 变更链表首地址为第一个节点
-                    d->ht[table].table = he->next;
+                    d->ht[table].table[idx] = he->next;
                 }
 
                 if (!nofree) {
@@ -399,8 +399,69 @@ int dictGenericDelete(dict *d,const void *key,int nofree){
  * 释放返回 DICT_OK,未找到返回 DICT_ERR
  * T = O(1)
  */
-int dictDelect(dict *d,void *key){
+int dictDelete(dict *d,void *key){
     return dictGenericDelete(d,key,0);
+}
+
+#define DICT_STATS_VECTLEN 50
+static void _dictPrintStatsHt(dictht *ht) {
+    unsigned long i, slots = 0, chainlen, maxchainlen = 0;
+    unsigned long totchainlen = 0;
+    unsigned long clvector[DICT_STATS_VECTLEN];
+
+    if (ht->used == 0) {
+        printf("No stats available for empty dictionaries\n");
+        return;
+    }
+
+    for (i = 0; i < DICT_STATS_VECTLEN; i++) clvector[i] = 0;
+    for (i = 0; i < ht->size; i++) {
+        dictEntry *he;
+
+        if (ht->table[i] == NULL) {
+            clvector[0]++;
+            continue;
+        }
+        slots++;
+        /* For each hash entry on this slot... */
+        chainlen = 0;
+        he = ht->table[i];
+        while(he) {
+            chainlen++;
+            he = he->next;
+        }
+        clvector[(chainlen < DICT_STATS_VECTLEN) ? chainlen : (DICT_STATS_VECTLEN-1)]++;
+        if (chainlen > maxchainlen) maxchainlen = chainlen;
+        totchainlen += chainlen;
+    }
+    printf("Hash table stats:\n");
+    printf(" table size: %ld\n", ht->size);
+    printf(" number of elements: %ld\n", ht->used);
+    printf(" different slots: %ld\n", slots);
+    printf(" max chain length: %ld\n", maxchainlen);
+    printf(" avg chain length (counted): %.02f\n", (float)totchainlen/slots);
+    printf(" avg chain length (computed): %.02f\n", (float)ht->used/slots);
+    printf(" Chain length distribution:\n");
+    for (i = 0; i < DICT_STATS_VECTLEN-1; i++) {
+        if (clvector[i] == 0) continue;
+        printf("   %s%ld: %ld (%.02f%%)\n",(i == DICT_STATS_VECTLEN-1)?">= ":"", i, clvector[i], ((float)clvector[i]/ht->size)*100);
+    }
+}
+
+void dictPrintStats(dict *d) {
+    _dictPrintStatsHt(&d->ht[0]);
+    if (dictIsRehashing(d)) {
+        printf("-- Rehashing into ht[1]:\n");
+        _dictPrintStatsHt(&d->ht[1]);
+    }
+}
+
+// 打印节点的键值对
+void dictPrintEntry(dictEntry *he){
+
+    keyObject *key = (keyObject*)he->key;
+    keyObject *val = (keyObject*)he->v.val;
+    printf("dictPrintEntry,k=%d,v=%d\n",key->val,val->val);
 }
 
 void test_empty_dict(void)
@@ -412,24 +473,47 @@ void test_empty_dict(void)
 
 void test_add_and_delete_key_value_pair(void)
 {
+    dictEntry *he;
+
     // 创建新字典
     dict *d = dictCreate(&initDictType, NULL);
 
     // 创建键和值
     keyObject *k = keyCreate(1);
     valObject *v = valCreate(10086);
+    valObject *v2 = valCreate(10010);
 
-    // 添加键值对
+    // 添加节点
     dictAdd(d, k, v);
 
-    printf("dictAdd : dict size %d",dictSize(d));
+    printf("dictAdd \n");
+    dictPrintStats(d);
+    printf("---------------------\n");
 
-    // assert(
-    //     dictFind(d, k) != NULL
-    // );
+    // 查找节点
+    he = dictFind(d, k);
+    if (he) {
+        dictPrintEntry(he);
+    } else {
+        printf("dictFind, not find\n");
+    }
+    printf("---------------------\n");
 
-    // // 删除键值对
-    // dictDelete(d, k);
+    // 节点值替换
+    dictReplace(d,k,v2);
+    he = dictFind(d, k);
+    printf("dictReplace : \n");
+    if (he) {
+        dictPrintEntry(he);
+    } else {
+        printf("dictReplace, not find\n");
+    }
+    printf("---------------------\n");
+
+    // 删除节点
+    dictDelete(d, k);
+    printf("dictDelete , dict size %d\n",dictSize(d));
+    dictPrintStats(d);
 
     // assert(
     //     dictSize(d) == 0
