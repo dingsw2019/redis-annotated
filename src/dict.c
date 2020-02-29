@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <sys/time.h>
 #include <ctype.h>
+#include <time.h>   
 
 #include "dict.h"
 #include "zmalloc.h"
@@ -373,7 +374,7 @@ dictEntry *dictFind(dict *d,void *key){
         he = d->ht[table].table[idx];
         while(he){
             // 查找相同 key
-            if (dictCompareKey(d,key,he->key))
+            if (dictCompareKeys(d,key,he->key))
                 return he;
             
             he = he->next;
@@ -385,6 +386,128 @@ dictEntry *dictFind(dict *d,void *key){
 
     // 未找到
     return NULL;
+}
+
+/**
+ * 自定义随机函数 (非 redis 函数)
+ * 因为 C99编译器没有 random 函数
+ */ 
+int customRandom()
+{
+    srand(time(NULL));
+    return rand();
+}
+
+/**
+ * 从字典中随机返回一个节点
+ * 
+ * 空字典返回 NULL , 否则返回 节点
+ *
+ * T = O(N)
+ */
+dictEntry *dictGetRandomKey(dict *d)
+{
+    dictEntry *he,*origHe;
+    unsigned int h;
+    int listlen, listele;
+
+    // 空字典不进行处理
+    if (d->ht[0].size == 0) return NULL;
+
+    // 处在 rehash 状态,进行单步 rehash
+    // if (dictIsRehashing(d)) _dictRehashStep(d);
+
+    // rehash状态,处理 主副哈希表
+    if (dictIsRehashing(d)){
+        // 随机获取非空节点链表
+        do {
+            // 随机索引值,根据主副哈希表的长度计算随机值
+            h = customRandom() % (d->ht[0].size+d->ht[1].size);
+            // 取出节点链表首地址
+            he = (h >= d->ht[0].size) ? d->ht[1].table[h - d->ht[0].size] :
+                                        d->ht[0].table[h];
+        }while(he == NULL);
+
+    } 
+    // 非 rehash 状态,处理主哈希表
+    else {
+        // 随机获取非空节点链表
+        do {
+            // 随机索引值 (gcc 没有random)
+            h = customRandom() & d->ht[0].sizemask;
+            // 取出节点链表首地址
+            he = d->ht[0].table[h];
+        }while(he == NULL);
+    }
+
+    // 计算链表长度
+    listlen = 0;
+    origHe = he;
+    while(he){
+        he = he->next;
+        listlen++;
+    }
+    // 根据链表长度获取随机值
+    listele = customRandom() % listlen;
+
+    // 获取随机值指向的节点
+    he = origHe;
+    while(listele--) he = he->next;
+
+    // 返回节点
+    return he;
+}
+
+/**
+ * 随机起始节点,然后连续取最多 count 个节点
+ * 并存入 des 中
+ * 
+ * 返回添加到 des 的节点数, 未添加返回 0
+ */
+int dictGetRandomKeys(dict *d,dictEntry **des,int count){
+
+    int j;
+    int stored = 0;
+
+    // 节点数小于 count,设置count为已有节点数
+    if (dictSize(d) < count) count = dictSize(d);
+
+    while (stored < count){
+        // 遍历主副哈希表
+        for(j=0; j<2; j++){
+
+            // 获取随机数并确定哈希表索引值
+            unsigned int i = customRandom() & d->ht[j].sizemask;
+            int size = d->ht[j].size;
+
+            // 遍历随机节点链表后的所有节点链表
+            // 包含随机节点链表
+            while(size--){
+                dictEntry *he = d->ht[j].table[i];
+                // 遍历节点链表
+                while(he){
+
+                    // 填充 count 个节点到 des
+                    *des = he;
+                    des++;
+                    // 下一个节点
+                    he = he->next;
+                    stored++;
+                    // 填充完成,返回填充数
+                    if (stored == count) return stored;
+                    
+                }
+                // 下一个节点链表
+                i = (i+1) & d->ht[j].sizemask;
+            }
+
+            // 非 rehash 状态,不遍历 1 号哈希表
+            assert(dictIsRehashing(d) != 0);
+        }
+    }
+
+    // 返回填充数
+    return stored;
 }
 
 /**
@@ -421,6 +544,24 @@ int dictReplace(dict *d,void *key,void *val){
 }
 
 /**
+ * 新增或查找包含指定键的节点
+ * 
+ * key 已存在, 返回节点
+ * key 不存在, 新增节点并返回
+ * 出发任一情况,始终返回节点,新增的节点没有 value
+ *
+ * T = O(N) 
+ */
+dictEntry *dictReplaceRaw(dict *d,void *key){
+
+    // 查找节点是否存在
+    dictEntry *entry = dictFind(d,key);
+    // 节点存在直接返回,否则新增节点
+    // todo可优化,dictAddRaw中包含find逻辑,已经find过,只需要一个单纯add的函数就可以了
+    return entry ? entry : dictAddRaw(d,key);
+}
+
+/**
  * 查找并释放给定键的节点
  * 
  * 参数 nofree 决定是否调用键和值的释放函数
@@ -454,7 +595,7 @@ int dictGenericDelete(dict *d,const void *key,int nofree){
         while(he){
             
             // 找到相同节点键
-            if (dictCompareKey(d,key,he->key)) {
+            if (dictCompareKeys(d,key,he->key)) {
 
                 if (prevHe){
                     // 删除链表非首节点
@@ -464,7 +605,7 @@ int dictGenericDelete(dict *d,const void *key,int nofree){
                 } else {
                     // 删除链表的第一个节点
                     // 变更链表首地址为第一个节点
-                    d->ht[table].table = he->next;
+                    d->ht[table].table[idx] = he->next;
                 }
 
                 if (!nofree) {
@@ -499,86 +640,160 @@ int dictGenericDelete(dict *d,const void *key,int nofree){
  * 释放返回 DICT_OK,未找到返回 DICT_ERR
  * T = O(1)
  */
-int dictDelect(dict *d,void *key){
+int dictDelete(dict *d,void *key){
     return dictGenericDelete(d,key,0);
 }
 
-void test_empty_dict(void)
+/**
+ * 从字典删除给定键的节点
+ * 但不释放节点
+ * 
+ * 删除成功返回 DICT_OK, 未找到返回 DICT_ERR
+ *
+ * T = O(1)
+ */
+int dictDeleteNoFree(dict *ht,void *key)
 {
-    dict* d = dictCreate(&initDictType, NULL);
-
-    dictRelease(d);
+    return dictGenericDelete(ht,key,1);
 }
 
-void test_add_and_delete_key_value_pair(void)
-{
-    // 创建新字典
-    dict *d = dictCreate(&initDictType, NULL);
+/* ------------------------------- Debugging --------------------------------- */
+#define DICT_STATS_VECTLEN 50
 
-    // 创建键和值
-    keyObject *k = keyCreate(1);
-    valObject *v = valCreate(10086);
+// 打印哈希表使用情况的统计数据
+static void _dictPrintStatsHt(dictht *ht) {
+    unsigned long i, slots = 0, chainlen, maxchainlen = 0;
+    unsigned long totchainlen = 0;
+    unsigned long clvector[DICT_STATS_VECTLEN];
 
-    // 添加键值对
-    dictAdd(d, k, v);
+    if (ht->used == 0) {
+        printf("No stats available for empty dictionaries\n");
+        return;
+    }
 
-    printf("dictAdd : dict size %d",dictSize(d));
+    for (i = 0; i < DICT_STATS_VECTLEN; i++) clvector[i] = 0;
+    for (i = 0; i < ht->size; i++) {
+        dictEntry *he;
 
-    // assert(
-    //     dictFind(d, k) != NULL
-    // );
-
-    // // 删除键值对
-    // dictDelete(d, k);
-
-    // assert(
-    //     dictSize(d) == 0
-    // );
-
-    // assert(
-    //     dictFind(d, k) == NULL
-    // );
-
-    // // 释放字典
-    // dictRelease(d);
+        if (ht->table[i] == NULL) {
+            clvector[0]++;
+            continue;
+        }
+        slots++;
+        /* For each hash entry on this slot... */
+        chainlen = 0;
+        he = ht->table[i];
+        while(he) {
+            chainlen++;
+            he = he->next;
+        }
+        clvector[(chainlen < DICT_STATS_VECTLEN) ? chainlen : (DICT_STATS_VECTLEN-1)]++;
+        if (chainlen > maxchainlen) maxchainlen = chainlen;
+        totchainlen += chainlen;
+    }
+    printf("Hash table stats:\n");
+    printf(" table size: %ld\n", ht->size);
+    printf(" number of elements: %ld\n", ht->used);
+    printf(" different slots: %ld\n", slots);
+    printf(" max chain length: %ld\n", maxchainlen);
+    printf(" avg chain length (counted): %.02f\n", (float)totchainlen/slots);
+    printf(" avg chain length (computed): %.02f\n", (float)ht->used/slots);
+    printf(" Chain length distribution:\n");
+    for (i = 0; i < DICT_STATS_VECTLEN-1; i++) {
+        if (clvector[i] == 0) continue;
+        printf("   %s%ld: %ld (%.02f%%)\n",(i == DICT_STATS_VECTLEN-1)?">= ":"", i, clvector[i], ((float)clvector[i]/ht->size)*100);
+    }
 }
+
+// 打印字典使用情况的统计数据
+void dictPrintStats(dict *d) {
+    _dictPrintStatsHt(&d->ht[0]);
+    if (dictIsRehashing(d)) {
+        printf("-- Rehashing into ht[1]:\n");
+        _dictPrintStatsHt(&d->ht[1]);
+    }
+}
+
+// 打印节点的键值对
+void dictPrintEntry(dictEntry *he){
+
+    keyObject *key = (keyObject*)he->key;
+    keyObject *val = (keyObject*)he->v.val;
+    printf("dictPrintEntry,k=%d,v=%d\n",key->val,val->val);
+}
+
+
 
 // gcc -g zmalloc.c dictType.c dict.c
 void main(void)
 {
+    int ret;
+    dictEntry *he;
 
-    // test_empty_dict();
+    // 创建一个空字典
+    dict *d = dictCreate(&initDictType, NULL);
 
-    test_add_and_delete_key_value_pair();
+    // 节点的键值
+    keyObject *k = keyCreate(1);
+    valObject *v = valCreate(10086);
+
+    // 添加节点
+    dictAdd(d, k, v);
+
+    dictPrintStats(d);
+    printf("\ndictAdd, (k=1,v=10086) join dict,dict used size %d\n",dictSize(d));
+    printf("---------------------\n");
+
+    // 查找节点
+    he = dictFind(d, k);
+    if (he) {
+        printf("dictFind,k is 1 to find entry\n");
+        dictPrintEntry(he);
+    } else {
+        printf("dictFind, not find\n");
+    }
+    printf("---------------------\n");
+
+    // 节点值替换
+    valObject *vRep = valCreate(10010);
+    dictReplace(d,k,vRep);
+    he = dictFind(d, k);
+    if (he) {
+        printf("dictReplace, find entry(k=1,value=10086) and replace value(10010)\n");
+        dictPrintEntry(he);
+    } else {
+        printf("dictReplace, not find\n");
+    }
+    printf("---------------------\n");
+
+    // 新增节点(dictReplace)
+    keyObject *k2 = keyCreate(2);
+    valObject *v2 = valCreate(10000);
+    dictReplace(d,k2,v2);
+    he = dictFind(d, k);
+    if (he) {
+        printf("dictAdd through dictReplace, add entry(k=2,value=10000) join dict\n");
+        dictPrintEntry(he);
+    } else {
+        printf("dictAdd through dictReplace, not find entry\n");
+    }
+    dictPrintStats(d);
+    printf("---------------------\n");
+
+    // 随机获取一个节点
+    he = dictGetRandomKey(d);
+    if (he) {
+        printf("dictGetRandomKey , ");
+        dictPrintEntry(he);
+    } else {
+        printf("dictGetRandomKey , not find entry\n");
+    }
+
+    // 删除节点
+    ret = dictDelete(d, k);
+    printf("dictDelete : %s, dict size %d\n\n",((ret==DICT_OK) ? "yes" : "no"),dictSize(d));
+    
+    // 释放字典
+    dictRelease(d);
 
 }
-
-// int main(int argc, char **argv) {
-
-    // int ret;
-    // sds key = sdsnew("key");
-    // sds val = sdsnew("val");
-    // dict *dd = dictCreate(&keyptrDictType, NULL);
-
-    // printf("Add elements to dict\n");
-    // for (int i = 0; i < 6 ; ++i) {
-    //     ret = dictAdd(dd, sdscatprintf(key, "%d", i), sdscatprintf(val, "%d", i));
-    //     printf("Add ret%d is :%d ,", i, ret);
-    //     printf("ht[0].used :%lu, ht[0].size :%lu, "
-    //                    "ht[1].used :%lu, ht[1].size :%lu\n", dd->ht[0].used, dd->ht[0].size, dd->ht[1].used, dd->ht[1].size);
-    // }
-
-    // printf("\nDel elements to dict\n");
-    // for (int i = 0; i < 6 ; ++i) {
-    //     ret = dictDelete(dd, sdscatprintf(key, "%d", i));
-    //     printf("Del ret%d is :%d ,", i, ret);
-    //     printf("ht[0].used :%lu, ht[0].size :%lu, "
-    //                    "ht[1].used :%lu, ht[1].size :%lu\n", dd->ht[0].used, dd->ht[0].size, dd->ht[1].used, dd->ht[1].size);
-    // }
-
-    // sdsfree(key);
-    // sdsfree(val);
-    // dictRelease(dd);
-
-    // return 0;
-// }

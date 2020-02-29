@@ -171,5 +171,6 @@ dict *dictCreate(dictType *type,void *privDataPtr);
 int dictAdd(dict *d,void *key,void *val);
 dictEntry *dictAddRaw(dict *d,void *key);
 int dictExpand(dict *d,unsigned long size);
+int customRandom();
 
 #endif
