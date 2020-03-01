@@ -32,7 +32,8 @@ static unsigned long _dictNextPower(unsigned long size);
 static int _dictKeyIndex(dict *ht,const void *key);
 // 字典初始化
 static int _dictInit(dict *ht,dictType *type,void *privDataPtr);
-
+// 单步 rehash
+static void _dictRehashStep(dict *d);
 /**
  * 重置或初始化指定哈希表的各项属性值
  * 
@@ -316,7 +317,7 @@ dictEntry *dictAddRaw(dict *d,void *key){
     dictht *ht;
 
     // 如果字典处在 rehash 状态，进行单步 rehash
-    // if (dictIsRehashing(d)) _dictRehashStep(d);
+    if (dictIsRehashing(d)) _dictRehashStep(d);
 
     // 计算键在哈希表中的索引值
     // 如果值为 -1 ， 那么表示键已经存在
@@ -359,7 +360,7 @@ dictEntry *dictFind(dict *d,void *key){
     if (d->ht[0].size == 0) return NULL;
 
     // 尝试进行单步 rehash
-    // if (dictIsRehashing(d)) _dictRehashStep(d);
+    if (dictIsRehashing(d)) _dictRehashStep(d);
 
     // 计算键的哈希值
     h = dictHashKey(d,key);
@@ -415,7 +416,7 @@ dictEntry *dictGetRandomKey(dict *d)
     if (d->ht[0].size == 0) return NULL;
 
     // 处在 rehash 状态,进行单步 rehash
-    // if (dictIsRehashing(d)) _dictRehashStep(d);
+    if (dictIsRehashing(d)) _dictRehashStep(d);
 
     // rehash状态,处理 主副哈希表
     if (dictIsRehashing(d)){
@@ -578,7 +579,7 @@ int dictGenericDelete(dict *d,const void *key,int nofree){
     // 空字典,返回
     if (d->ht[0].size == 0) return DICT_ERR;
     // 进行单步 rehash
-    // if (dictIsRehashing(d)) _dictRehashStep(d);
+    if (dictIsRehashing(d)) _dictRehashStep(d);
 
     // 计算哈希值
     h = dictHashKey(d,key);
@@ -779,6 +780,90 @@ void dictReleaseIterator(dictIterator *iter)
     zfree(iter);
 }
 
+/**
+ * N 步渐进式 rehash,
+ * 
+ * 返回 1 表示仍有节点需要从 0 号哈希表移动到 1 号哈希表
+ * 返回 0 表示所有节点移动完毕 或 不处理
+ * 
+ * 每步 rehash 都是以一个节点链表(bucket)为单位移动的
+ * 一次 rehash 会移动一个桶里全部的节点
+ * 
+ * T = O(N)
+ */
+int dictRehash(dict *d,int n){
+    
+    // 非 rehash 状态, 不处理
+    if (!dictIsRehashing(d)) return 0;
+
+    // 移动节点,执行 n 次
+    while(n--){
+        dictEntry *he,*nextHe;
+
+        // 0 号哈希表为空,表示 rehash 完成
+        if (d->ht[0].used == 0) {
+            // 释放 0 号哈希表的内存
+            zfree(d->ht[0].table);
+            // 将 1 号哈希表设置为 新 0 号哈希表
+            d->ht[0] = d->ht[1];
+            // 重置 1 号哈希表
+            _dictReset(&d->ht[1]);
+            // 关闭 rehash 标识
+            d->rehashidx = -1;
+            // 返回 0 表示 rehash 完成
+            return 0;
+        }
+
+        // 确保 rehashidx 没有越界
+        assert(d->ht[0].size > (unsigned)d->rehashidx);
+
+        // 跳过空节点
+        while(d->ht[0].table[d->rehashidx] == NULL) d->rehashidx++;
+
+        // 节点链表表头(索引链表 bucket)
+        he = d->ht[0].table[d->rehashidx];
+        // 遍历节点链表,将链表中所有节点移动到 1 号哈希表
+        while(he){
+            unsigned long h;
+            // 记录下一个节点
+            nextHe = he->next;
+            
+            // 计算 1 号哈希表的索引值
+            h = dictHashKey(d,he->key) & d->ht[1].sizemask;
+            
+            // 头插法移动节点到 1 号哈希表
+            he->next = d->ht[1].table[h];
+            d->ht[1].table[h] = he;
+            
+            // 更新计数器
+            d->ht[0].used--;
+            d->ht[1].used++;
+
+            // 处理下一个节点
+            he = nextHe;
+        }
+        // 删除 0 号哈希表移动的节点的指针指向
+        d->ht[0].table[d->rehashidx] = NULL;
+        // 更新rehashidx
+        d->rehashidx++;
+    }
+
+    return 1;
+}
+
+/**
+ * 字典不存在安全迭代器的情况下,进行单步 rehash
+ * 
+ * 字典有安全迭代器的情况下不进行 rehash
+ * 因为两种不同的迭代和修改操作可能会弄乱字典
+ * 
+ * T = O(1)
+ */
+static void _dictRehashStep(dict *d)
+{
+    if (d->iterators == 0) dictRehash(d,1);
+}
+
 /* ------------------------------- Debugging --------------------------------- */
 #define DICT_STATS_VECTLEN 50
 
@@ -849,7 +934,7 @@ void dictPrintAllEntry(dict *d)
 {
     dictEntry *he;
     // 获取迭代器
-    dictIterator *iter = dictGetIterator(d);
+    dictIterator *iter = dictGetSafeIterator(d);
 
     // 迭代所有节点
     printf("dictPrintAllEntry , list : \n");
