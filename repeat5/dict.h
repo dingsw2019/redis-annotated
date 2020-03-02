@@ -98,7 +98,7 @@ typedef struct dictIterator
 // 设置键
 #define dictSetKey(d,entry,_key_) do{ \
     if ((d)->type->keyDup) \
-        (entry)->key = (d)->type->keyDup((d)->privdata,(_key_)) \
+        (entry)->key = (d)->type->keyDup((d)->privdata,(_key_)); \
     else \
         (entry)->key = (_key_); \
 }while(0)
@@ -111,7 +111,7 @@ typedef struct dictIterator
 // 设置值
 #define dictSetVal(d,entry,_val_) do{ \
     if ((d)->type->valDup) \
-        (entry)->v.val = (d)->type->valDup((d)->privdata,(_val_)) \
+        (entry)->v.val = (d)->type->valDup((d)->privdata,(_val_)); \
     else \
         (entry)->v.val = (_val_); \
 }while(0)
