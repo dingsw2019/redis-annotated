@@ -993,7 +993,7 @@ void main(void)
     keyObject *k2 = keyCreate(2);
     valObject *v2 = valCreate(10000);
     dictReplace(d,k2,v2);
-    he = dictFind(d, k);
+    he = dictFind(d, k2);
     if (he) {
         printf("dictAdd through dictReplace, add entry(k=2,value=10000) join dict\n");
         dictPrintEntry(he);
