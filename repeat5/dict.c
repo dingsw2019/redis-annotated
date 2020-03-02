@@ -303,6 +303,42 @@ dictEntry *dictFind(dict *d,void *key)
     return NULL;
 }
 
+// 替换或添加节点
+// 如果键存在,替换值,返回 0
+// 如果键不存在,新增节点, 返回 1
+int dictReplace(dict *d,void *key,void *val)
+{
+    dictEntry *entry,auxentry;
+    // 尝试新增节点,如果成功返回 1
+    if(dictAdd(d,key,val) == DICT_OK)
+        return 1;
+
+    // 新增失败,说明键存在,查找节点
+    entry = dictFind(d,key);
+
+    // 保存旧值的指针
+    auxentry = *entry;
+
+    // 更新节点值
+    dictSetVal(d,entry,val);
+
+    // 释放节点的旧值
+    dictFreeVal(d,&auxentry);
+
+    return 0;
+}
+
+// 查找或添加节点(只设置键)
+// 如果键存在字典中,返回节点
+// 如果键不存在字典中,添加后返回节点
+dictEntry *dictReplaceRaw(dict *d,void *key)
+{   
+    dictEntry * entry = dictFind(d,key);
+    
+    return (entry) ? entry : dictAddRaw(d,key);
+}
+
+
 
 /* ------------------- debug -------------------- */
 void dictPrintEntry(dictEntry *he){
