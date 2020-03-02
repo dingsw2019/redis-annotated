@@ -40,7 +40,7 @@ typedef struct dictht
 typedef struct dictType
 {
     // 计算哈希值
-    unsigned int (*keyHashFunction)(const void *key);
+    unsigned int (*hashFunction)(const void *key);
     // 复制键
     void *(*keyDup)(void *privdata,const void *key);
     // 复制值
@@ -115,8 +115,21 @@ typedef struct dictIterator
     else \
         (entry)->v.val = (_val_); \
 }while(0)
+
+// 对比键
+#define dictCompareKey(d,key1,key2) \
+    ((d)->type->keyCompare ? \
+        (d)->type->keyCompare((d)->privdata,key1,key2) : \
+        (key1) == (key2))
+
 // 计算哈希值
+#define dictHashKey(d,key) (d)->type->hashFunction(key)
 // 哈希表已用节点数
+#define dictSize(d) ((d)->ht[0].used + (d)->ht[1].used)
 // 是否 rehash 状态
+#define dictIsRehashing(d) ((d)->rehashidx != -1)
+
+int _dictClear(dict *d, dictht *ht,void (callback)(void *));
+dict *dictCreate(dictType *type,void *privDataPtr);
 
 #endif
