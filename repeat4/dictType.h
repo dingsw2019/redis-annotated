@@ -1,30 +1,31 @@
-#include <stdlib.h>
+#ifndef _DICT_TYPE_H
+#define _DICT_TYPE_H
 
-typedef struct keyObject {
+// 键
+typedef struct keyObject
+{
     int val;
 } keyObject;
 
-typedef struct valObject {
+// 值
+typedef struct valObject
+{
     int val;
 } valObject;
 
-// 创建一个键
-keyObject *keyCreate(int index);
-// 销毁一个键
-void keyRelease(keyObject *key);
 
-// 创建一个值
-valObject *valCreate(int val);
-// 销毁一个值
-void valRelease(valObject *val);
-
-// dict type 的函数
-
-// 获取 key 的哈希值
-unsigned int hashKeyIndex(const void *key);
-// 对比两个键
-int keyCompare(void *privdata,const void *key1,const void *key2);
-// 销毁指定键
+// 创建键
+keyObject *keyCreate(int n);
+// 创建值
+valObject *valCreate(int n);
+// 释放键
 void keyDestructor(void *privdata,void *key);
-// 销毁指定值
+// 释放值
 void valDestructor(void *privdata,void *val);
+// 计算哈希值
+unsigned int keyHashIndex(const void *key);
+// 对比键
+int keyCompare(void *privdata,const void *key1,const void *key2);
+
+
+#endif
