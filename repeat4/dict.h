@@ -45,7 +45,7 @@ typedef struct dictType
     // 复制值
     void *(*valDup)(void *privdata,const void *obj);
     // 对比值
-    void (*keyCompare)(void *privdata,const void *key1,const void *key2);
+    int (*keyCompare)(void *privdata,const void *key1,const void *key2);
     // 销毁键
     void (*keyDestructor)(void *privdata,void *key);
     // 销毁值

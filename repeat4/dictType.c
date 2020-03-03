@@ -48,7 +48,7 @@ int keyCompare(void *privdata,const void *key1,const void *key2)
     return (k1->val == k2->val);
 }
 
-dictType *initDictType = {
+dictType initDictType = {
     keyHashIndex,
     NULL,
     NULL,
