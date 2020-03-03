@@ -473,6 +473,165 @@ int dictDeleteNoFree(dict *d,void *key)
     return dictGenericDelete(d,key,1);
 }
 
+// 创建一个不安全迭代器
+dictIterator *dictGetIterator(dict *d)
+{
+    dictIterator *iter = zmalloc(sizeof(*iter));
+    iter->d = d;
+    iter->table = 0;
+    iter->index = -1;
+    iter->safe = 0;
+    iter->entry = NULL;
+    iter->nextEntry = NULL;
+
+    return iter;
+}
+
+// 创建一个安全迭代器
+dictIterator *dictGetSafeIterator(dict *d)
+{
+    dictIterator *iter = dictGetIterator(d);
+    iter->safe = 1;
+    return iter;
+}
+
+// 将节点指针移动到下一个节点
+// 成功返回节点, 未找到或迭代完成返回 NULL
+dictEntry *dictNext(dictIterator *iter)
+{
+    // 两种情况进入这里
+    // 1. 迭代器初始化
+    // 2. 遍历完一个节点链表
+    while(1){    
+        if (iter->entry == NULL) {
+            dictht *ht = &iter->d->ht[iter->table];
+            // 初次迭代运行
+            if (iter->table == 0 && iter->index == -1) {
+                // 安全迭代器
+                if (iter->safe) {
+                // 更新字典的安全迭代器计数器
+                iter->d->iterators++;
+                } 
+                // 不安全迭代器
+                else {
+                    // 记录指纹
+                    // iter->fingerprint = fingerprint(d);
+                }
+            }
+            // 更新迭代器索引值
+            iter->index++;
+
+            // 如果索引值越界,说明 0 号哈希表遍历完,开始遍历 1 号哈希表
+            if (iter->index >= ht->size) {
+                if (dictIsRehashing(iter->d) && iter->table == 0) {
+                    // table , index 更新
+                    iter->table++;
+                    iter->index = 0;
+                    // 哈希表 更新
+                    ht = &iter->d->ht[1];
+                } else {
+                    break;
+                }
+            }
+
+            // 确认节点
+            iter->entry = ht->table[iter->index];
+        }
+        // 走到这里说明, 要开始迭代节点链表了
+        else {
+            // 确认节点
+            iter->entry = iter->nextEntry;
+        }
+
+        // 如果节点链表存在,赋值下一个节点,并返回当前节点
+        if (iter->entry) {
+            iter->nextEntry = iter->entry->next;
+            return iter->entry;
+        }
+    }
+
+    // 迭代完成
+    return NULL;
+}
+
+// 释放迭代器
+void dictReleaseIterator(dictIterator *iter)
+{
+    // 如果是运行过的迭代器
+    if (!(iter->table == 0 && iter->index == -1)) {
+        // 安全迭代器
+        if (iter->safe) {
+            // 更新字典的安全迭代器计数器
+            iter->d->rehashidx--;
+        } 
+        // 不安全迭代器
+        else {
+            // 验证指纹
+            // assert(iter->fingerprint == fingerPrint(d));
+        }
+    }
+
+    // 释放迭代器
+    zfree(iter);
+}
+
+// N步渐进式 rehash
+// 返回 1 , 表示还存在需要移动的节点
+// 返回 0 , 表示 rehash 完毕
+int dictRehash(dict *d,int n)
+{   
+    if (!dictIsRehashing(d)) return 0;
+    
+    // 执行 n 次
+    while(n--){
+
+        dictEntry *he;
+
+        // 0 号哈希表空, 说明 rehash 完成
+        if (d->ht[0].used == 0) {
+            // 释放 0 号哈希表内存
+            zfree(d->ht[0].table);
+            // 1 号哈希表赋值给 0 号哈希表
+            d->ht[0] = d->ht[1];
+            // 重置 1 号哈希表
+            _dictReset(&d->ht[1]);
+            // 关闭 rehash 标识
+            d->rehashidx = -1;
+            // 返回
+            return 0;
+        }
+
+        // 确保 rehash 没有越界
+        assert(d->ht[0].size > (unsigned)d->rehashidx);
+
+        // 获取非空节点链表首地址
+        while(d->ht[0].table[d->rehashidx] == NULL)
+            d->rehashidx++;
+
+        he = d->ht[0].table[d->rehashidx];
+        // 遍历节点链表
+        while(he){
+            unsigned long idx;  
+            // 计算键在 1 号哈希表的索引值
+            idx = dictHashKey(d,he->key) & d->ht[1].sizemask;
+            // 键值对赋给 1 号哈希表
+            he->next = d->ht[1].table[idx];
+            d->ht[1].table[idx] = he;
+            // 更新哈希表已用节点数
+            d->ht[0].used--;
+            d->ht[1].used++;
+
+            // 处理下一个节点
+            he = he->next;
+        }
+        // 节点链表置空
+        d->ht[0].table[d->rehashidx] = NULL;
+        d->rehashidx++;
+    }
+
+    return 1;
+}
+
 
 /* ------------------- debug -------------------- */
 void dictPrintEntry(dictEntry *he){
@@ -480,6 +639,21 @@ void dictPrintEntry(dictEntry *he){
     valObject *v = (valObject*)he->v.val;
 
     printf("dictPrintEntry, k=%d,v=%d\n",k->val,v->val);
+}
+
+void dictPrintAllEntry(dict *d) {
+    
+    dictEntry *he;
+
+    // 获取迭代器
+    dictIterator *iter = dictGetIterator(d);
+    
+    // 打印所有节点
+    while((he = dictNext(iter)) != NULL)
+        dictPrintEntry(he);
+
+    // 释放迭代器
+    dictReleaseIterator(iter);
 }
 
 
@@ -549,9 +723,9 @@ void main(void)
     }
     printf("---------------------\n");
 
-    // // 通过迭代器获取打印所有节点
-    // dictPrintAllEntry(d);
-    // printf("---------------------\n");
+    // 通过迭代器获取打印所有节点
+    dictPrintAllEntry(d);
+    printf("---------------------\n");
 
     // 删除节点
     ret = dictDelete(d, k);
