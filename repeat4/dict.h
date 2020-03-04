@@ -85,7 +85,7 @@ typedef struct dictIterator
 } dictIterator;
 
 // 哈希表数组初始化大小
-#define DICT_HT_INITIVAL_SIZE 4
+#define DICT_HT_INITIAL_SIZE 4
 
 // 释放节点值
 #define dictFreeVal(d,entry) \
