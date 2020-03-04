@@ -480,6 +480,148 @@ dictEntry *dictGetRandomKey(dict *d)
     return he;
 }
 
+// 获取不安全迭代器
+dictIterator *dictGetIterator(dict *d)
+{
+    dictIterator *iter = zmalloc(sizeof(*iter));
+
+    iter->d = d;
+    iter->table = 0;
+    iter->index = -1;
+    iter->safe = 0;
+    iter->entry = NULL;
+    iter->nextEntry = NULL;
+
+    return iter;
+}
+
+// 获取安全迭代器
+dictIterator *dictGetSafeIterator(dict *d)
+{
+    dictIterator *iter = dictGetIterator(d);
+    iter->safe = 1;
+    return iter;
+}
+
+// 迭代器执行迭代
+// 成功返回节点, 失败返回 NULL
+dictEntry *dictNext(dictIterator *iter)
+{
+    while(1){
+
+        
+        // 两种情况
+        // 1. 第一次进入
+        // 2. 节点数组首地址
+        if (iter->entry == NULL) {
+            dictht *ht;
+
+            ht = &iter->d->ht[iter->table];
+            // 初始执行
+            if (iter->table==0 && iter->index == -1) {
+                if (iter->safe) {
+                    iter->d->iterators++;
+                } else {
+                    // iter->fingerprint = fingerPrint(d);
+                }
+            }
+
+            iter->index++;
+
+            // 切换哈希表
+            if (iter->index >= ht->size) {
+                if (dictIsRehashing(iter->d) && iter->table == 0) {
+                        iter->table++;
+                        iter->index = 0;
+                        ht = &iter->d->ht[1];
+                } else {
+                    break;
+                }
+            }
+
+            // 节点数组
+            iter->entry = ht->table[iter->index];
+        }
+        // 下一个节点
+        else {
+            iter->entry = iter->nextEntry;
+        }
+
+        // 获取下一个节点指针,返回当前节点
+        if (iter->entry) {
+            iter->nextEntry = iter->entry->next;
+            return iter->entry;
+        }
+    }
+
+    return NULL;
+}
+
+// 销毁迭代器
+void dictReleaseIterator(dictIterator *iter)
+{
+    if (!(iter->table==0 && iter->index==-1)) {
+        if (iter->safe) {
+            iter->d->iterators--;
+        } else {
+            // assert(iter->fingerprint == fingerPrint(d));
+        }
+    }
+}
+
+// N步渐进式 rehash
+int dictRehash(dict *d,int n)
+{
+    while(n--){
+        dictEntry *he,*nextHe;
+
+        // rehash 完成
+        if (d->ht[0].used == 0) {
+            // 释放 0 号哈希表的数组
+            zfree(d->ht[0].table);
+            // 1 号哈希表 移动到 0号
+            d->ht[0] = d->ht[1];
+            // 重置 1 号哈希表
+            _dictReset(&d->ht[1]);
+            // 关闭rehash 标识
+            d->rehashidx = -1;
+            // 返回
+            return 0;
+        }
+
+        assert(d->rehashidx < d->ht[0].size);
+
+        // 跳过空节点数组
+        while((he = d->ht[0].table[d->rehashidx]) == NULL) d->rehashidx++;
+
+        // 遍历节点链表
+        while(he){
+            unsigned int h;
+            nextHe = he->next;
+            // 计算索引值
+            h = dictHashKey(d,he->key) & d->ht[1].sizemask;
+
+            // 移动节点
+            he->next = d->ht[1].table[h];
+            d->ht[1].table[h] = he;
+
+            // 更新已用节点数
+            d->ht[0].used--;
+            d->ht[1].used++;
+
+            he = nextHe;
+        }
+        
+        // 释放哈希值
+        d->ht[0].table[d->rehashidx] = NULL;
+
+        // 更新 rehashid
+        d->rehashidx++;
+    }
+
+    return 1;
+}
+
 /* ----------------- debug -------------- */
 // 打印节点的键值对
 void dictPrintEntry(dictEntry *he)
@@ -489,6 +631,16 @@ void dictPrintEntry(dictEntry *he)
     printf("dictPrintEntry, k=%d,v=%d\n",k->val,v->val);
 }
 
+void dictPrintAllEntry(dict *d)
+{   
+    dictEntry *he;
+    dictIterator *iter = dictGetSafeIterator(d);
+
+    while ((he = dictNext(iter)) != NULL)
+        dictPrintEntry(he);
+
+    dictReleaseIterator(iter);
+}
 
 // gcc -g zmalloc.c dictType.c dict.c
 void main(void)
@@ -556,9 +708,9 @@ void main(void)
     }
     printf("---------------------\n");
 
-    // // 通过迭代器获取打印所有节点
-    // dictPrintAllEntry(d);
-    // printf("---------------------\n");
+    // 通过迭代器获取打印所有节点
+    dictPrintAllEntry(d);
+    printf("---------------------\n");
 
     // 删除节点
     ret = dictDelete(d, k);
