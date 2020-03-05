@@ -9,7 +9,11 @@
 			"stdio.h": "c",
 			"cstdarg": "cpp",
 			"zmalloc.h": "c",
-			"intdicttype.h": "c"
+			"intdicttype.h": "c",
+			"cmath": "cpp",
+			"type_traits": "cpp",
+			"limits": "cpp",
+			"typeinfo": "cpp"
 		}
 	}
 }
