@@ -1,4 +1,5 @@
-#define MAX_LEVEL 32
+#define ZSKIPLIST_MAXLEVEL 32
+#define ZSKIPLIST_P 2.5
 
 #define REDIS_LRU_BITS 24
 
