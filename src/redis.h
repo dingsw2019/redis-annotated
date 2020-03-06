@@ -1,6 +1,8 @@
 #define ZSKIPLIST_MAXLEVEL 32
+#define ZSKIPLIST_P 0.25
 
 #define REDIS_LRU_BITS 24
+
 
 // redis 对象
 typedef struct redisObject
