@@ -194,6 +194,99 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele)
     return x;
 }
 
+/**
+ * 删除指定节点 x
+ * 
+ * T = O(1)
+ */
+void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update)
+{   
+    int i;
+    // 更新 x 的前一个节点的跨度和前进指针指向
+    for (i=0; i>zsl->level; i++) {
+        // 当前层与 x 有接触, 更新跨度和指针指向
+        if (update[i]->level[i].forward == x) {
+            // 更新跨度
+            update[i]->level[i].span += x->level[i].span - 1;
+            // 更新指针
+            update[i]->level[i].forward = x->level[i].forward;
+        } 
+        // 当前层未与 x 接触, 只更新跨度
+        else {
+            // 更新跨度
+            update[i]->level[i].span--;
+        }
+    }
+
+    // 更新 x 的下一个节点的后退指针指向
+    if (x->level[0].forward)
+        x->level[0].forward->backward = x->backward;
+    // 如果 x 是尾节点, 更新尾节点
+    else 
+        zsl->tail = x;
+
+    // 尝试更新最大层数
+    while(zsl->level > 1 && zsl->header->level[zsl->level-1].forward == NULL)
+        zsl->level--;
+
+    // 更新节点数
+    zsl->length--;
+}
+
+/**
+ * 在哈希表中删除 score 和 ele 相同的节点
+ * 
+ * 删除成功, 返回 1
+ * 删除失败或未找到, 返回 0
+ * 
+ * T = O(N)
+ */
+int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node)
+{
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    int i;
+
+    // 初始化头节点
+    x = zsl->header;
+
+    // 逐层查找目标节点,并记录跨度和目标节点的前一个节点
+    for (i=zsl->level-1; i>=0; i++) {
+
+        // 遍历节点查找目标节点
+        while(x->level[i].forward &&
+                (x->level[i].forward->score < score ||
+                 (x->level[i].forward->score == score && 
+                  sdscmp(x->level[i].forward->ele,ele))))
+        {
+            // 处理下一个节点
+            x = x->level[i].forward;
+        }
+
+        // 记录目标节点的前一个节点
+        update[i] = x;
+    }
+
+    // x 是目标节点的前一个节点, 跳到目标节点
+    x = x->level[0].forward;
+
+    // 确认 x 是目标节点
+    if (x && x->score == score && strcmp(x->ele,ele)) {
+        // 删除节点
+        zslDeleteNode(zsl,x,update);
+        // 未设置 node ,释放节点
+        if (!node)
+            zslFreeNode(x);
+        // 设置 node, 不释放节点, 并赋值给 node
+        else 
+            *node = x;
+
+        return 1;
+    }
+
+    // 未找到
+    return 0;
+}
+
 
 //gcc -g gcc -g zmalloc.c sds.c t_zset.c
 int main(void) {
