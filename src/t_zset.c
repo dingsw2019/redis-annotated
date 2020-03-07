@@ -1,16 +1,13 @@
-#include <stdlib.h>
-#include <time.h>
-#include "zmalloc.h"
 #include "redis.h"
 
 // 创建一个指定层数的跳跃表节点
-zskiplistNode *zslCreateNode(int level, double score, robj *obj)
+zskiplistNode *zslCreateNode(int level, double score, sds ele)
 {
     // 申请内存
     zskiplistNode *zn = zmalloc(sizeof(*zn)+level*sizeof(struct zskiplistLevel));
     // 设置属性
     zn->score = score;
-    zn->obj = obj;
+    zn->ele = ele;
 
     return zn;
 }
@@ -81,13 +78,6 @@ void zslFree(zskiplist *zsl)
     zfree(zsl);
 }
 
-// 生成随机值
-int customRandom()
-{
-    srand(time(NULL));
-    return rand();
-}
-
 /**
  * 返回一个随机值，用作新跳跃表节点的层数
  * 
@@ -100,13 +90,17 @@ int zslRandomLevel(void)
 {
     int level = 1;
     // 随机值小于 1/4 的int值, level增加
-    while((customRandom()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
+    while((rand() & 0xFFFF) < (ZSKIPLIST_P * 0xFFFF)){
         level += 1;
+    }
 
     return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
 }
 
-zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj)
+/**
+ * 添加并返回跳跃表新节点
+ */
+zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele)
 {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     unsigned int rank[ZSKIPLIST_MAXLEVEL];
@@ -128,8 +122,8 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj)
                 // 比对分值
                (x->level[i].forward->score < score ||
                 // 比对成员
-                (x->level[i].forward->score == score && 
-                 compareStringObj(x->level[i].forward->obj,obj)<0
+                (x->level[i].forward->score == score 
+                 && sdscmp(x->level[i].forward->ele,ele)<0
              ))
         )
         {
@@ -159,7 +153,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj)
     }
 
     // 创建新节点
-    x = zslCreateNode(level,score,obj);
+    x = zslCreateNode(level,score,ele);
 
     // 设置层属性
     for (i=0; i<level; i++){
@@ -198,4 +192,24 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj)
     zsl->length++;
 
     return x;
+}
+
+
+//gcc -g gcc -g zmalloc.c sds.c t_zset.c
+int main(void) {
+
+    srand((unsigned)time(NULL));
+
+    unsigned long ret;
+    zskiplistNode *node;
+    zskiplist *zsl = zslCreate();
+
+
+    zslInsert(zsl, 65.5, sdsnew("tom"));    //level = 1
+    zslInsert(zsl, 87.5, sdsnew("jack"));   //level = 4
+    zslInsert(zsl, 70.0, sdsnew("alice"));  //level = 3
+    zslInsert(zsl, 95.0, sdsnew("tony"));   //level = 2
+
+
+    return 0;
 }

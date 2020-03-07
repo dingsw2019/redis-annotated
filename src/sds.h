@@ -1,11 +1,12 @@
 #ifndef __SDS_H
 #define __SDS_H
 
+#include <sys/types.h>
+#include <stdarg.h>
+
 //最大预分配长度
 #define SDS_MAX_PREALLOC (1024*1024)
 
-#include <sys/types.h>
-#include <stdarg.h>
 
 //类型别名,存sdshdr的buf属性
 typedef char *sds;
@@ -28,5 +29,8 @@ static inline size_t sdsavail(const sds s){
     struct sdshdr *sh = (void*)(s-sizeof(struct sdshdr));
     return sh->free;
 }
+
+sds sdsnew(const char *init);
+int sdscmp(const sds s1, const sds s2);
 
 #endif

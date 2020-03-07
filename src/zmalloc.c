@@ -1,7 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
+
 #include "zmalloc.h"
 
 //由于malloc函数申请的内存不会标识内存块的大小，
