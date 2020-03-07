@@ -89,3 +89,97 @@ int zslRandomLevel()
 
     return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
 }
+
+// 添加跳跃表节点
+zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj)
+{
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    unsigned int rank[ZSKIPLIST_MAXLEVEL];
+    int i, level;
+
+    // 起始节点
+    x = zsl->header;
+
+    // 自上向下遍历层,逐层查找符合添加条件的位置
+    for (i=zsl->level-1; i>=0; i++) {
+
+        // 跳过的节点数,下层会继承上层跳过的节点数
+        rank[i] = (i == (zsl->level-1)) ? 0 : rank[i+1];
+
+        // 符合已下条件, 继续遍历节点
+        // 1. 下一个节点的 score 小于传入 score
+        // 2. 下一个节点的 score 等于传入 score, obj 小于传入 obj
+        while (x->level[i].forward && 
+                (x->level[i].forward->score < score ||
+                (x->level[i].forward->score ==score &&
+                    compareStringObject(x->level[i].forward->obj,obj)))) 
+        {
+            // 更新跳过节点数
+            rank[i] += x->level[i].span;
+            // 处理下一个节点
+            x = x->level[i].forward;
+        }
+
+        // 遍历节点完成,记录待插入节点的前一个节点
+        update[i] = x;
+    }
+
+    // 生成随机层数
+    level = zslRandomLevel();
+
+    // 初始化未设置层的属性
+    if (level > zsl->level) {
+        
+        for (i=zsl->level; i<level; i++) {
+
+            // 跳过 0 个节点
+            rank[i] = 0;
+            // 新节点的前一个节点为首节点
+            update[i] = zsl->header;
+            // span 为跳跃表节点数
+            update[i]->level[i].span = zsl->length;
+        }
+
+        // 更新跳跃表最大层
+        zsl->level = level;
+    }
+
+    // 创建新节点
+    x = zslCreateNode(level,score,obj);
+
+    // 设置新节点各层的属性
+    for (i=0; i<level; i++) {
+
+        // 更新"新节点"的前进指针指向
+        x->level[i].forward = update[i]->level[i].forward;
+
+        // 更新"新节点前一个节点"的前进指针指向
+        update[i]->level[i].forward = x;
+
+        // 更新"新节点"的跨度
+        x->level[i].span = update[i]->level[i].span - (rank[0] - rank[i]);
+
+        // 更新"新节点前一个节点"的跨度
+        update[i]->level[i].span = (rank[0] - rank[1]) + 1;
+    }
+
+    // 未设置层,跨度增加
+    for (i=level; i<zsl->level; i++) {
+        update[i]->level[i].span++;
+    }
+
+    // 设置"新节点"的后退指针指向
+    x->backward = (update[0] == zsl->header) ? NULL : update[0];
+
+    // 更新"新节点下一个节点"的后退指针指向
+    if (x->level[0].forward)
+        x->level[0].forward->backward = x;
+    // 跳跃表尾节点是否更新
+    else 
+        zsl->tail = x;
+
+    // 更新跳跃表节点数量
+    zsl->length++;
+
+    return x;
+}

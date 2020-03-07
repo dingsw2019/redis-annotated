@@ -21,6 +21,15 @@ typedef struct redisObject
 // 跳跃表节点
 typedef struct zskiplistNode 
 {
+    // 分值
+    double score;
+
+    // 对象成员
+    robj *obj;
+
+    // 后退指针
+    struct zskiplistNode *backward;
+    
     // 层
     struct zskiplistLevel 
     {
@@ -29,15 +38,6 @@ typedef struct zskiplistNode
         // 跨度
         unsigned int span;
     } level[];
-    
-    // 后退指针
-    struct zskiplistNode *backward;
-
-    // 分值
-    double score;
-
-    // 对象成员
-    robj *obj;
 } zskiplistNode;
 
 // 跳跃表
