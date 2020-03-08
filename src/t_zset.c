@@ -336,6 +336,146 @@ int zslIsInRange(zskiplist *zsl, zrangespec *range)
     return 1;
 }
 
+/**
+ * 符合搜索条件(range) 的第一个节点
+ * 
+ * 成功, 返回节点
+ * 失败或未找到, 返回 NULL
+ */
+zskiplistNode *zslFirstInRange(zskiplist *zsl, zrangespec *range)
+{
+    zskiplistNode *x;
+    int i;
+
+    // 边界判断,如果所有节点都不在范围内存, 返回 NULL
+    if (!zslIsInRange(zsl,range)) return NULL;
+
+    // 自上而下遍历层
+    x = zsl->header;
+    for (i=zsl->level-1; i>=0; i--) {
+        // 遍历节点,跳过 score 小于 range 最小值的节点
+        while(x->level[i].forward && 
+                !zslValueGteMin(x->level[i].forward->score,range))
+            // 处理下一个节点
+            x = x->level[i].forward;
+    }
+
+    // x 的下一个节点是大于 range 最小值的节点
+    x = x->level[0].forward;
+
+    // 判断 x 的下一个节点不能是 NULL
+    // redisAssert(x != NULL);
+    if (x == NULL) return NULL;
+
+    // x 的分值不能超过 range 的最大值
+    if (!zslValueLteMax(x->score,range)) return NULL;
+
+    // 返回节点
+    return x;
+}
+
+/**
+ * 查找符合搜索条件(range)的最大的节点
+ * 
+ * 成功返回节点, 否则返回 NULL
+ */
+zskiplistNode *zslLastInRange(zskiplist *zsl, zrangespec *range)
+{
+    zskiplistNode *x;
+    int i;
+
+    // 边界判断,如果所有节点都不在范围内存, 返回 NULL
+    if (!zslIsInRange(zsl,range)) return NULL;
+
+    // 自上向下查找, 第一个节点分值大于 range 的最大值的节点
+    x = zsl->header;
+    for (i=zsl->level-1; i>=0; i--) {
+
+        while(x->level[i].forward && 
+                zslValueLteMax(x->level[i].forward->score,range))
+            x = x->level[i].forward;
+    }
+
+    if (x == NULL) return NULL;
+
+    // 检查节点分值是否大于 min
+    if (!zslValueGteMin(x->score,range)) return NULL;
+
+    return x;
+}
+
+/**
+ * 根据分值和对象成员查找节点的索引值
+ * 
+ * 找到返回 索引值, 未找到返回 0
+ */
+unsigned long zslGetRank(zskiplist *zsl, double score, sds ele)
+{
+    zskiplistNode *x;
+    unsigned long rank = 0;
+    int i;
+
+    // 直上向下遍历层
+    x = zsl->header;
+    for (i=zsl->level-1; i>=0; i--) {
+
+        // 跳过不符合的节点
+        while (x->level[i].forward && 
+                (x->level[i].forward->score < score ||
+                 (x->level[i].forward->score == score && 
+                 sdscmp(x->level[i].forward->ele,ele)<=0 )))
+        {
+            // 记录跳过的节点数
+            rank += x->level[i].span;
+
+            // 处理下一个节点
+            x = x->level[i].forward;
+        }
+
+        // 确认当前节点是否为目标节点
+        if (x->ele && sdscmp(x->ele,ele) == 0) {
+            return rank;
+        }
+    }
+
+    // 未找到
+    return 0;
+}
+
+/**
+ * 根据索引值查找节点
+ * 
+ * 找到返回 节点, 未找到返回 NULL
+ */
+zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank)
+{
+    zskiplistNode *x;
+    unsigned long traversed = 0;
+    int i;
+
+    // 直上向下遍历层
+    x = zsl->header;
+    for (i=zsl->level-1; i>=0; i--) {
+
+        // 按 rank 跳过节点
+        while (x->level[i].forward && (traversed + x->level[i].span) <= rank) {
+            // 记录跳过的节点数
+            traversed += x->level[i].span;
+            // 处理下一个节点
+            x = x->level[i].forward;
+        }
+
+        // 检查当前索引是否为目标索引
+        if (traversed == rank) {
+            // 返回节点
+            return x;
+        }
+    }
+
+    // 未找到
+    return NULL;
+}
+
 //gcc -g zmalloc.c sds.c t_zset.c
 int main(void) {
 
@@ -350,6 +490,34 @@ int main(void) {
     zslInsert(zsl, 87.5, sdsnew("jack"));   //level = 4
     zslInsert(zsl, 70.0, sdsnew("alice"));  //level = 3
     zslInsert(zsl, 95.0, sdsnew("tony"));   //level = 2
+
+    //定义一个区间， 70.0 <= x <= 90.0
+    zrangespec spec = {       
+        .min = 70.0,
+        .max = 90.0,
+        .minex = 0,
+        .maxex = 0
+    };
+
+    // 找到符合区间的最小值
+    printf("zslFirstInRange 70.0 <= x <= 90.0, x is:");
+    node = zslFirstInRange(zsl, &spec);
+    printf("%s->%f\n", node->ele, node->score);
+
+    // 找到符合区间的最大值
+    printf("zslLastInRange 70.0 <= x <= 90.0, x is:");
+    node = zslLastInRange(zsl, &spec);
+    printf("%s->%f\n", node->ele, node->score);
+
+    // 根据分数获取排名
+    printf("tony's Ranking is :");
+    ret = zslGetRank(zsl, 95.0, sdsnew("tony"));
+    printf("%lu\n", ret);
+
+    // 根据排名获取分数
+    printf("The Rank equal 4 is :");
+    node = zslGetElementByRank(zsl, 4);
+    printf("%s->%f\n", node->ele, node->score);
 
     ret = zslDelete(zsl, 70.0, sdsnew("alice"), &node);  // 删除元素
     if (ret == 1) {
