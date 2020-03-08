@@ -32,5 +32,6 @@ static inline size_t sdsavail(const sds s){
 
 sds sdsnew(const char *init);
 int sdscmp(const sds s1, const sds s2);
+void sdsfree(sds s);
 
 #endif

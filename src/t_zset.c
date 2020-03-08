@@ -51,6 +51,9 @@ void zslFreeNode(zskiplistNode *node)
     // 更新引用计数,如果引用计数为0,再释放实际值的内存
     // decrRefcount(node->obj);
 
+    // 释放实际值
+    sdsfree(node->ele);
+
     // 释放节点
     zfree(node);
 }
@@ -123,9 +126,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele)
                (x->level[i].forward->score < score ||
                 // 比对成员
                 (x->level[i].forward->score == score 
-                 && sdscmp(x->level[i].forward->ele,ele)<0
-             ))
-        )
+                 && sdscmp(x->level[i].forward->ele,ele)<0 )))
         {
             // 更新跳过节点数
             rank[i] += x->level[i].span;
@@ -203,7 +204,7 @@ void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update)
 {   
     int i;
     // 更新 x 的前一个节点的跨度和前进指针指向
-    for (i=0; i>zsl->level; i++) {
+    for (i=0; i<zsl->level; i++) {
         // 当前层与 x 有接触, 更新跨度和指针指向
         if (update[i]->level[i].forward == x) {
             // 更新跨度
@@ -214,7 +215,7 @@ void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update)
         // 当前层未与 x 接触, 只更新跨度
         else {
             // 更新跨度
-            update[i]->level[i].span--;
+            update[i]->level[i].span -= 1;
         }
     }
 
@@ -223,7 +224,7 @@ void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update)
         x->level[0].forward->backward = x->backward;
     // 如果 x 是尾节点, 更新尾节点
     else 
-        zsl->tail = x;
+        zsl->tail = x->backward;
 
     // 尝试更新最大层数
     while(zsl->level > 1 && zsl->header->level[zsl->level-1].forward == NULL)
@@ -250,13 +251,13 @@ int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node)
     x = zsl->header;
 
     // 逐层查找目标节点,并记录跨度和目标节点的前一个节点
-    for (i=zsl->level-1; i>=0; i++) {
+    for (i=zsl->level-1; i>=0; i--) {
 
         // 遍历节点查找目标节点
         while(x->level[i].forward &&
                 (x->level[i].forward->score < score ||
                  (x->level[i].forward->score == score && 
-                  sdscmp(x->level[i].forward->ele,ele))))
+                  sdscmp(x->level[i].forward->ele,ele) < 0 )))
         {
             // 处理下一个节点
             x = x->level[i].forward;
@@ -270,7 +271,7 @@ int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node)
     x = x->level[0].forward;
 
     // 确认 x 是目标节点
-    if (x && x->score == score && strcmp(x->ele,ele)) {
+    if (x && x->score == score && sdscmp(x->ele,ele)==0) {
         // 删除节点
         zslDeleteNode(zsl,x,update);
         // 未设置 node ,释放节点
@@ -287,8 +288,55 @@ int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node)
     return 0;
 }
 
+/**
+ * 检查给定值 value 是否大于或大于等于, 搜索条件(spec)的最小值(min)
+ * 
+ * 大于等于 min 返回 1, 否则返回 0
+ */
+static int zslValueGteMin(double value,zrangespec *spec)
+{
+    return spec->minex ? (value > spec->min) : (value >= spec->min);
+}
 
-//gcc -g gcc -g zmalloc.c sds.c t_zset.c
+/**
+ * 检查给定值 value 是否小于或小于等于, 搜索条件(spec)的最大值(max)
+ * 
+ * 小于等于 max 返回 1 , 否则返回 0
+ */
+static int zslValueLteMax(double value, zrangespec *spec)
+{
+    return spec->maxex ? (value < spec->max) : (value <= spec->max);
+}
+
+/**
+ * 检查搜索条件(spec) 能否正确查询
+ * 
+ * 正确查询条件, 返回 1
+ * 错误查询条件, 返回 0
+ */
+int zslIsInRange(zskiplist *zsl, zrangespec *range) 
+{
+    zskiplistNode *x;
+    // 检查搜索条件(spec)正确性
+    if (range->min > range->max ||
+        (range->min == range->max && (range->maxex || range->minex)))
+        return 0;
+
+    // 超范围检查(zsl 最大值与 spec 最小值)
+    x = zsl->tail;
+    if (x == NULL || !zslValueGteMin(x->score,range))
+        return 0;
+
+    // 超范围检查(zsl 最小值与 spec 最大值)
+    x = zsl->header->level[0].forward;
+    if (x == NULL || !zslValueLteMax(x->score,range))
+        return 0;
+
+    // 搜索条件(spec) 可正常查询
+    return 1;
+}
+
+//gcc -g zmalloc.c sds.c t_zset.c
 int main(void) {
 
     srand((unsigned)time(NULL));
@@ -303,6 +351,10 @@ int main(void) {
     zslInsert(zsl, 70.0, sdsnew("alice"));  //level = 3
     zslInsert(zsl, 95.0, sdsnew("tony"));   //level = 2
 
-
+    ret = zslDelete(zsl, 70.0, sdsnew("alice"), &node);  // 删除元素
+    if (ret == 1) {
+        printf("Delete node:%s->%f success!\n", node->ele, node->score);
+    }
+    
     return 0;
 }
