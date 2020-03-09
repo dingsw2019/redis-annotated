@@ -9,9 +9,6 @@
 #define ZSKIPLIST_MAXLEVEL 32
 #define ZSKIPLIST_P 0.25
 
-#define REDIS_LRU_BITS 24
-
-
 // 跳跃表节点 (level必须放在最后一个)
 typedef struct zskiplistNode 
 {

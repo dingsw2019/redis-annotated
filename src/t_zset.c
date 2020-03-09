@@ -566,17 +566,17 @@ int main(void) {
     zskiplistNode *node;
     zskiplist *zsl = zslCreate();
 
-
-    zslInsert(zsl, 65.5, sdsnew("tom"));    //level = 1
-    zslInsert(zsl, 69.5, sdsnew("tom"));    //level = 1
-    zslInsert(zsl, 87.5, sdsnew("jack"));   //level = 4
-    zslInsert(zsl, 20.5, sdsnew("zhangsan"));    //level = 1
-    zslInsert(zsl, 70.0, sdsnew("alice"));  //level = 3
-    zslInsert(zsl, 39.5, sdsnew("lisi"));    //level = 1
-    zslInsert(zsl, 95.0, sdsnew("tony"));   //level = 2
+    // 添加节点
+    zslInsert(zsl, 65.5, sdsnew("tom"));     // 3
+    zslInsert(zsl, 69.5, sdsnew("wangwu"));  // 4
+    zslInsert(zsl, 87.5, sdsnew("jack"));    // 6
+    zslInsert(zsl, 20.5, sdsnew("zhangsan"));// 1
+    zslInsert(zsl, 70.0, sdsnew("alice"));   // 5
+    zslInsert(zsl, 39.5, sdsnew("lisi"));    // 2
+    zslInsert(zsl, 95.0, sdsnew("tony"));    // 7
 
     //定义一个区间， 70.0 <= x <= 90.0
-    zrangespec spec = {       
+    zrangespec range1 = {       
         .min = 70.0,
         .max = 90.0,
         .minex = 0,
@@ -585,12 +585,12 @@ int main(void) {
 
     // 找到符合区间的最小值
     printf("zslFirstInRange 70.0 <= x <= 90.0, x is:");
-    node = zslFirstInRange(zsl, &spec);
+    node = zslFirstInRange(zsl, &range1);
     printf("%s->%f\n", node->ele, node->score);
 
     // 找到符合区间的最大值
     printf("zslLastInRange 70.0 <= x <= 90.0, x is:");
-    node = zslLastInRange(zsl, &spec);
+    node = zslLastInRange(zsl, &range1);
     printf("%s->%f\n", node->ele, node->score);
 
     // 根据分数获取排名
