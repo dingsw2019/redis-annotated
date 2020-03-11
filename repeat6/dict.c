@@ -313,7 +313,207 @@ dictEntry *dictGetRandomKey(dict *d)
 }
 
 // 删除节点
+// 删除成功返回 DICT_OK, 否则返回 DICT_ERR
+int dictGenericDelete(dict *d, void *key,int nofree)
+{
+    dictEntry *he,*prevHe;
+    unsigned int h,idx,table;
+    // 空字典不处理
+    if (d->ht[0].size == 0) return DICT_ERR;
 
+    // 尝试单步 rehash
+    // if (dictIsRehashing(d)) _dictRehashStep(d);
+
+    // 计算哈希值
+    h = dictHashKey(d, key);
+
+    // 遍历哈希表
+    for (table=0; table<=1; table++) {
+
+        // 计算索引值
+        idx = h & d->ht[table].sizemask;
+
+        he = d->ht[table].table[idx];
+        prevHe = NULL;
+        // 遍历节点链表
+        while (he) {
+
+            // 找到目标节点,并删除
+            if (dictCompareKey(d,he->key,key)) {
+                
+                if (prevHe) {
+                    prevHe->next = he->next;
+                } else {
+                    d->ht[table].table[idx] = he->next;
+                }
+
+                dictFreeVal(d,he);
+                dictFreeKey(d,he);
+                zfree(he);
+
+                d->ht[table].used--;
+
+                return DICT_OK;
+            }
+            prevHe = he;
+            // 处理下一个节点
+            he = he->next;
+        }
+    }
+
+    // 未找到
+    return DICT_ERR;
+}
+
+// 删除节点并释放键值对
+int dictDelete(dict *d, void *key)
+{
+    return dictGenericDelete(d,key,0);
+}
+
+// 删除节点但不释放键值对
+int dictDeleteNoFree(dict *d, void *key)
+{
+    return dictGenericDelete(d,key,1);
+}
+
+// 删除哈希表数组并重置哈希表属性
+int _dictClear(dict *d, dictht *ht, void (*callback)(void *))
+{
+    dictEntry *he,*next;
+    unsigned int i;
+
+    // 遍历节点数组
+    for (i=0; i<ht->size && ht->used>0; i++) {
+
+        // 回调
+        if (callback && (i % 65535)==0) callback(d->privdata);
+
+        // 跳过空节点
+        if ((he = ht->table[i]) == NULL) continue;
+        // 遍历节点链表
+        while (he) {
+            next = he->next;
+            // 释放键值对
+            dictFreeVal(d,he);
+            dictFreeKey(d,he);
+            zfree(he);
+            he = next;
+
+            ht->used--;
+        }
+    }
+
+    // 释放哈希表数组
+    zfree(ht->table);
+
+    // 重置哈希表
+    _dictReset(ht);
+
+    return DICT_OK;
+}
+
+// 释放字典
+void dictRelease(dict *d)
+{
+    // 释放哈希表
+    _dictClear(d,&d->ht[0],NULL);
+    _dictClear(d,&d->ht[1],NULL);
+
+    // 释放字典
+    zfree(d);
+}
+
+// 创建一个不安全的迭代器
+dictIterator *dictGetIterator(dict *d)
+{
+    // 申请内存空间
+    dictIterator *iter = zmalloc(sizeof(*iter));
+    iter->d = d;
+    iter->table = 0;
+    iter->index = -1;
+    iter->safe = 0;
+    iter->entry = NULL;
+    iter->nextEntry = NULL;
+
+    return iter;
+}
+
+// 创建一个安全的迭代器
+dictIterator *dictGetSafeIterator(dict *d)
+{
+    dictIterator *iter = dictGetIterator(d);
+    iter->safe = 1;
+    return iter;
+}
+
+// 销毁迭代器 myerr
+dictIterator *dictReleaseIterator(dictIterator *iter)
+{
+    // myerr 缺少
+    if(!(iter->index == -1 && iter->table ==0)) {
+        if (iter->safe) {
+            iter->d->iterators--;
+        } else {
+            // assert(iter->fingerprint == dictFingerPrint(iter->d));
+        }
+    }
+
+    zfree(iter);
+}
+
+// 迭代器,前进一个节点
+dictEntry *dictNext(dictIterator *iter)
+{
+    dictht *ht;
+    // 进入这里的两种情况
+    // 1.迭代器首次进入
+    // 2.新的节点数组
+    while (1) {
+
+        if (iter->entry == NULL) {
+
+            ht = &iter->d->ht[iter->table];
+
+            // 首次进入
+            if (iter->table == 0 && iter->index == -1) {
+                if (iter->safe) {
+                    iter->d->iterators++;
+                } else {
+                    // iter->fingerprint = fingerPrint(iter->d);
+                }
+            }
+
+            iter->index++;
+
+            // if (iter->index == ht->size) { myerr
+            if (iter->index >= (unsigned)ht->size) {
+
+                if (dictIsRehashing(iter->d) && iter->table == 0) {
+                    iter->table++;
+                    iter->index = 0;
+                    // myerr 缺少
+                    ht = &iter->d->ht[1];
+                } else {
+                    break;
+                }
+            }
+
+            // myerr 缺少
+            iter->entry = ht->table[iter->index];
+            
+        } else {
+            iter->entry = iter->nextEntry;
+        }
+
+        if (iter->entry) {
+            iter->nextEntry = iter->entry->next;
+            return iter->entry;
+        }
+    }
+
+    return NULL;
+}
 
 /*--------------------------- debug -------------------------*/
 void dictPrintEntry(dictEntry *he)
@@ -322,6 +522,16 @@ void dictPrintEntry(dictEntry *he)
     valObject *v = (valObject*)he->v.val;
 
     printf("dictPrintEntry: k=%d,v=%d\n",k->val,v->val);
+}
+
+void dictPrintAllEntry(dict *d)
+{
+    dictIterator *iter = dictGetIterator(d);
+    dictEntry *he;
+    while ((he = dictNext(iter)) != NULL) {
+        dictPrintEntry(he);
+    }
+    dictReleaseIterator(iter);
 }
 
 // gcc -g zmalloc.c dictType.c dict.c
@@ -392,15 +602,14 @@ void main(void)
     }
     printf("---------------------\n");
 
-    // // 通过迭代器获取打印所有节点
-    // dictPrintAllEntry(d);
-    // printf("---------------------\n");
+    // 通过迭代器获取打印所有节点
+    dictPrintAllEntry(d);
+    printf("---------------------\n");
 
-    // // 删除节点
-    // ret = dictDelete(d, k);
-    // printf("dictDelete : %s, dict size %d\n\n",((ret==DICT_OK) ? "yes" : "no"),dictSize(d));
+    // 删除节点
+    ret = dictDelete(d, k);
+    printf("dictDelete : %s, dict size %d\n\n",((ret==DICT_OK) ? "yes" : "no"),dictSize(d));
     
-    // // 释放字典
-    // dictRelease(d);
-
+    // 释放字典
+    dictRelease(d);
 }
