@@ -199,11 +199,138 @@ int dictAdd(dict *d, void *key, void *val)
     return DICT_OK;
 }
 
+// 查找节点
+// 成功返回节点, 否则返回 NULL
+dictEntry *dictFind(dict *d, void *key)
+{   
+    dictEntry *he;
+    unsigned int h,idx,table;
+
+    // 空字典,不进行查找 myerr:缺少
+    if (d->ht[0].size == 0) return NULL;
+
+    // 尝试单步 rehash
+    // if (dictIsRehashing(d)) _dictRehashStep(d);
+
+    // 计算哈希值
+    h = dictHashKey(d,key);
+
+    // 遍历哈希表
+    for (table=0; table<=1; table++) {
+
+        // 计算索引值
+        idx = h & d->ht[table].sizemask;
+
+        he = d->ht[table].table[idx];
+        // 遍历节点链表
+        while (he) {
+            // 找到节点
+            if (dictCompareKey(d,he->key,key)) {
+                return he;
+            }
+            // 处理下一个节点
+            he = he->next;
+        }
+
+        if (!dictIsRehashing(d)) break;
+    }
+
+    // 未找到
+    return NULL;
+}
+
+// 节点替换或新增
+// 如果节点已存在, 替换节点值为 val, 返回 0
+// 如果节点不存在, 新增节点, 返回 1
+int dictReplace(dict *d, void *key, void *val)
+{   
+    dictEntry *entry,auxentry;
+    // 尝试新增节点
+    if (dictAdd(d,key,val) == DICT_OK)
+        return 1;
+
+    // 走到这里说明节点已存在,尝试修改
+    entry = dictFind(d,key);
+
+    auxentry = *entry;
+
+    // 修改节点值
+    dictSetVal(d,entry,val);
+
+    // 释放节点
+    dictFreeVal(d,&auxentry);
+
+    return 0;
+}
+
+// 查找或新增,目的是返回节点
+dictEntry *dictReplaceRaw(dict *d, void *key)
+{
+    dictEntry *entry = dictFind(d,key);
+    return (entry) ? entry : dictAddRaw(d,key);
+}
+
+// 随机返回节点
+dictEntry *dictGetRandomKey(dict *d)
+{
+    dictEntry *he,*origHe;
+    unsigned int idx;
+    int listlen, listele;
+
+    // 空字典不处理
+    if (d->ht[0].size == 0) return NULL;
+
+    // 尝试 rehash
+    // if (dictIsRehashing(d)) _dictRehashStep(d);
+
+    // 随机哈希表和索引值
+    if (dictIsRehashing(d)) {
+        do{
+            idx = rand() % (d->ht[0].size + d->ht[1].size);
+            he = (idx >= d->ht[0].size) ? 
+                d->ht[1].table[idx-d->ht[0].size] : d->ht[0].table[idx];
+        }while(he == NULL);
+    } else {
+        do{
+            idx = rand() & d->ht[0].sizemask;
+            he = d->ht[0].table[idx];
+        }while(he == NULL);
+    }
+
+    // 随机节点链表
+    origHe = he;
+    listlen = 0;
+    while (he) {
+        listlen++;
+        he = he->next;
+    }
+
+    listele = rand() % listlen;
+    he = origHe;
+    while(listele--) he = he->next;
+
+    return he;
+}
+
+// 删除节点
+
+
+/*--------------------------- debug -------------------------*/
+void dictPrintEntry(dictEntry *he)
+{
+    keyObject *k = (keyObject*)he->key;
+    valObject *v = (valObject*)he->v.val;
+
+    printf("dictPrintEntry: k=%d,v=%d\n",k->val,v->val);
+}
+
 // gcc -g zmalloc.c dictType.c dict.c
 void main(void)
 {
     int ret;
     dictEntry *he;
+
+    srand(time(NULL));
 
     // 创建一个空字典
     dict *d = dictCreate(&initDictType, NULL);
@@ -229,41 +356,41 @@ void main(void)
     }
     printf("---------------------\n");
 
-    // // 节点值替换
-    // valObject *vRep = valCreate(10010);
-    // dictReplace(d,k,vRep);
-    // he = dictFind(d, k);
-    // if (he) {
-    //     printf("dictReplace, find entry(k=1,value=10086) and replace value(10010)\n");
-    //     dictPrintEntry(he);
-    // } else {
-    //     printf("dictReplace, not find\n");
-    // }
-    // printf("---------------------\n");
+    // 节点值替换
+    valObject *vRep = valCreate(10010);
+    dictReplace(d,k,vRep);
+    he = dictFind(d, k);
+    if (he) {
+        printf("dictReplace, find entry(k=1,value=10086) and replace value(10010)\n");
+        dictPrintEntry(he);
+    } else {
+        printf("dictReplace, not find\n");
+    }
+    printf("---------------------\n");
 
-    // // 新增节点(dictReplace)
-    // keyObject *k2 = keyCreate(2);
-    // valObject *v2 = valCreate(10000);
-    // dictReplace(d,k2,v2);
-    // he = dictFind(d, k2);
-    // if (he) {
-    //     printf("dictAdd through dictReplace, add entry(k=2,value=10000) join dict\n");
-    //     dictPrintEntry(he);
-    // } else {
-    //     printf("dictAdd through dictReplace, not find entry\n");
-    // }
+    // 新增节点(dictReplace)
+    keyObject *k2 = keyCreate(2);
+    valObject *v2 = valCreate(10000);
+    dictReplace(d,k2,v2);
+    he = dictFind(d, k2);
+    if (he) {
+        printf("dictAdd through dictReplace, add entry(k=2,value=10000) join dict\n");
+        dictPrintEntry(he);
+    } else {
+        printf("dictAdd through dictReplace, not find entry\n");
+    }
     // dictPrintStats(d);
-    // printf("---------------------\n");
+    printf("---------------------\n");
 
-    // // 随机获取一个节点
-    // he = dictGetRandomKey(d);
-    // if (he) {
-    //     printf("dictGetRandomKey , ");
-    //     dictPrintEntry(he);
-    // } else {
-    //     printf("dictGetRandomKey , not find entry\n");
-    // }
-    // printf("---------------------\n");
+    // 随机获取一个节点
+    he = dictGetRandomKey(d);
+    if (he) {
+        printf("dictGetRandomKey , ");
+        dictPrintEntry(he);
+    } else {
+        printf("dictGetRandomKey , not find entry\n");
+    }
+    printf("---------------------\n");
 
     // // 通过迭代器获取打印所有节点
     // dictPrintAllEntry(d);
