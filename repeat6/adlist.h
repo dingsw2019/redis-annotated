@@ -1,23 +1,30 @@
-#ifndef ADLIST_H
-#define ADLIST_H
+#ifndef AD_LIST_H
+#define AD_LIST_H
 
-// 节点
-typedef struct listNode
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "zmalloc.h"
+
+// 双端链表节点
+typedef struct listNode 
 {
     struct listNode *prev;
     struct listNode *next;
     void *value;
 } listNode;
 
-// 链表
+// 双端链表
 typedef struct list 
 {
     listNode *head;
     listNode *tail;
-    void *(*dup)(void *ptr);
-    void (*free)(void *ptr);
-    int (*match)(void *ptr,void *key);
-    unsigned long len;
+    void *(*dup)(void *val);
+    void (*free)(void *val);
+    // void (*match)(void *v1,void *v2);
+    int (*match)(void *v1,void *v2);
+
+    unsigned long len;// myerr 缺少
 } list;
 
 // 迭代器
@@ -28,9 +35,11 @@ typedef struct listIter
 } listIter;
 
 // 链表长度
-#define listLength(l) (l)->len
+// #define listLength(l) (l)->len myerr
+#define listLength(l) ((l)->len)
 
-// 自定义链表匹配函数
+// 设置链表对比函数
+// #define listSetMatch(l,m) (l)->match = (m) myerr
 #define listSetMatchMethod(l,m) ((l)->match = (m))
 
 // 迭代方向

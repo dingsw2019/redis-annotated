@@ -515,6 +515,79 @@ dictEntry *dictNext(dictIterator *iter)
     return NULL;
 }
 
+// N 步 rehash
+// 返回 1, 表示还有节点可以 rehash
+// 返回 0, 表示 rehash 完成
+int dictRehash(dict *d, int n)
+{
+    // int h;
+    // 必须是 rehash 状态
+    if (!dictIsRehashing(d)) return 0;
+
+    while (n--) {
+        dictEntry *he,*nextHe;
+        // rehash 完成
+        if (d->ht[0].used == 0) {
+            zfree(d->ht[0].table);
+            // 1 号哈希表数据赋值给 0 号哈希表
+            d->ht[0] = d->ht[1];
+            _dictReset(&d->ht[1]);
+            d->rehashidx = -1;
+            // myerr 缺少
+            return 0;
+        }
+
+        // myerr 缺少
+        assert(d->ht[0].size > (unsigned)d->rehashidx);
+
+        // 跳过空节点
+        while(d->ht[0].table[d->rehashidx] == NULL) d->rehashidx++;
+
+        // 越界检查
+        // if (d->rehashidx > d->ht[0].size) {
+        //     break;
+        // }
+
+        he = d->ht[0].table[d->rehashidx];
+        // 遍历节点链表
+        while (he) {
+            
+            unsigned long h;
+            nextHe = he->next;// myerr 缺少
+
+            // 计算 key 在 1 号哈希表的索引值
+            h = dictHashKey(d,he->key) & d->ht[1].sizemask;
+
+            // 1号哈希表添加节点 myerr
+            // d->ht[1].table[h] = he;
+            // // 0号哈希表删除节点
+            // d->ht[0].table[d->rehashidx] = NULL;
+            he->next = d->ht[1].table[h];
+            d->ht[1].table[h] = he;
+
+            // 更新哈希表已用节点数
+            d->ht[1].used++;
+            d->ht[0].used--;
+            
+            he = nextHe;// myerr 缺少
+        }
+
+        // myerr 缺少
+        d->ht[0].table[d->rehashidx] = NULL;
+        d->rehashidx++;
+
+    }
+
+    // return 0; myerr
+    return 1;
+}
+
+// 单步 rehash
+static void _dictRehashStep(dict *d)
+{
+    return dictRehash(d,1);
+}
+
 /*--------------------------- debug -------------------------*/
 void dictPrintEntry(dictEntry *he)
 {
