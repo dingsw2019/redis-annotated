@@ -231,6 +231,61 @@ void listRotate(list *list)
     list->head = tail;
 }
 
+// 迭代器方向,从表尾开始
+void listRewindTail(list *list, listIter *iter)
+{
+    iter->next = list->tail;
+    iter->direction = AL_START_TAIL;
+}
+
+// 拷贝链表
+list *listDup(list *orig)
+{
+    list *copy;
+    listNode *node;
+    listIter *iter;
+
+    if ((copy = listCreate()) == NULL)
+        return NULL;
+
+    // 设置节点值处理函数 myerr 缺少
+    copy->dup = orig->dup;
+    copy->free = orig->free;
+    copy->match = orig->match;
+
+    if ((iter = listGetIterator(orig,AL_START_HEAD)) == NULL)
+        return NULL;
+
+    // 遍历节点
+    while ((node = listNext(iter)) != NULL) {
+        void *val;
+        // 复制值
+        // if (orig->dup) { myerr
+        if (copy->dup) {
+
+            // val = orig->dup(node->value); myerr
+            val = copy->dup(node->value);
+            if (val == NULL) {
+                listReleaseIterator(iter);
+                listRelease(copy);
+                return NULL;
+            }
+        }
+        else 
+            val = node->value;
+
+        // 添加节点到新表
+        if(listAddNodeTail(copy,val) == NULL) {
+            listReleaseIterator(iter);
+            listRelease(copy);
+            return NULL;
+        }
+    }
+
+    listReleaseIterator(iter);
+    return copy;
+}
+
 // 获取迭代器
 listIter *listGetIterator(list *list,int direction)
 {
@@ -355,21 +410,21 @@ int main(void){
     listRotate(li);
     printList(li);
 
-    // // 反转链表
-    // printf("reverse output the list : ");
-    // printf("li size is %d, elements:", listLength(li));
-    // listRewindTail(li, &iter);
-    // while ((node = listNext(&iter)) != NULL) {
-    //     printf("%s ", (char*)node->value);
-    // }
-    // printf("\n");
+    // 反转链表
+    printf("reverse output the list : ");
+    printf("li size is %d, elements:", listLength(li));
+    listRewindTail(li, &iter);
+    while ((node = listNext(&iter)) != NULL) {
+        printf("%s ", (char*)node->value);
+    }
+    printf("\n");
 
-    // // 复制链表
-    // printf("duplicate a new list : ");
-    // list *lidup = listDup(li);
-    // printList(lidup);
+    // 复制链表
+    printf("duplicate a new list : ");
+    list *lidup = listDup(li);
+    printList(lidup);
 
-    // listRelease(li);
+    listRelease(li);
 
     return 0;
 }

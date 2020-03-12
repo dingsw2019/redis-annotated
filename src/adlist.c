@@ -329,6 +329,10 @@ list *listDup(list *orig){
     if ((copy = listCreate()) == NULL) {
         return NULL;
     }
+    // 设置节点值处理函数
+    copy->dup = orig->dup;
+    copy->free = orig->free;
+    copy->match = orig->match;
 
     // 创建迭代器
     iter = listGetIterator(orig,AL_START_HEAD);
