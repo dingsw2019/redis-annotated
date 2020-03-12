@@ -46,4 +46,8 @@ typedef struct listIter
 #define AL_START_HEAD 0
 #define AL_START_TAIL 1
 
+listIter *listGetIterator(list *list,int direction);
+listNode *listNext(listIter *iter);
+void listReleaseIterator(listIter *iter);
+
 #endif
