@@ -1,31 +1,43 @@
 #ifndef __SDS_H
 #define __SDS_H
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <assert.h>
 #include <sys/types.h>
 #include <stdarg.h>
+#include "zmalloc.h"
+#include "testhelp.h"
+#include "limits.h"
 
+// 最大预分配长度 myerr:缺少
 #define SDS_MAX_PREALLOC (1024*1024)
 
-typedef char *sds;
+typedef char* sds;
 
-struct sdshdr {
+typedef struct sdshdr
+{
     int len;
     int free;
     char buf[];
-};
+} sdshdr;
 
-static inline size_t sdslen(sds s){
-    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+// sds字符串已用长度
+// static int sdslen(sds s) myerr
+static inline size_t sdslen(const sds s)
+{
+    struct sdshdr *sh = (void*)(s-sizeof(struct sdshdr));
     return sh->len;
 }
 
-static inline size_t sdsavail(sds s){
-    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+// sds字符串空闲长度
+// static int sdsavail(sds s) myerr
+static inline size_t sdsavail(const sds s)
+{
+    struct sdshdr *sh = (void*)(s-sizeof(struct sdshdr));
     return sh->free;
 }
-
-sds sdsnew(const char *init);
-int sdscmp(sds s1,sds s2);
-sds sdsfree(sds s);
 
 #endif

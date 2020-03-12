@@ -46,6 +46,17 @@ typedef struct listIter
 #define AL_START_HEAD 0
 #define AL_START_TAIL 1
 
+list *listCreate(void);
+list *listAddNodeHead(list *list,void *value);
+list *listAddNodeTail(list *list, void *value);
+list *listInsertNode(list *list,listNode *old_node,void *value,int after);
+void listRelease(list *list);
+listNode *listSearchKey(list *list, void *val);
+listNode *listIndex(list *list,long index);
+void listDelNode(list *list,listNode *node);
+void listRotate(list *list);
+void listRewindTail(list *list, listIter *iter);
+list *listDup(list *orig);
 listIter *listGetIterator(list *list,int direction);
 listNode *listNext(listIter *iter);
 void listReleaseIterator(listIter *iter);
