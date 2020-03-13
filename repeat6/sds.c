@@ -186,7 +186,7 @@ void sdsrange(sds s,int start,int end)
 
     // myerr:缺少
     if (len == 0) return ;
-    
+
     // 负索引转正数
     if (start < 0) {
         start = (len + start);
@@ -225,6 +225,25 @@ void sdsrange(sds s,int start,int end)
 
     // 返回
     // return s;
+}
+
+// sds 比较
+int sdscmp(sds s1, sds s2)
+{
+    size_t l1,l2,minlen;
+    int cmp;
+
+    l1 = strlen(s1);
+    l2 = strlen(s2);
+    minlen = (l1 < l2) ? l1 : l2;
+
+    cmp = memcmp(s1,s2,minlen);
+
+    if (cmp == 0) {
+        return (l1 - l2);
+    }
+
+    return cmp;
 }
 
 //执行: gcc -g zmalloc.c sds.c
@@ -301,29 +320,29 @@ int main(void){
     test_cond("sdsrange(...,100,100)",
         sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
 
-    // sdsfree(y);
-    // sdsfree(x);
-    // x = sdsnew("foo");
-    // y = sdsnew("foa");
-    // test_cond("sdscmp(foo,foa)", sdscmp(x,y) > 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("foo");
+    y = sdsnew("foa");
+    test_cond("sdscmp(foo,foa)", sdscmp(x,y) > 0)
 
-    // sdsfree(y);
-    // sdsfree(x);
-    // x = sdsnew("bar");
-    // y = sdsnew("bar");
-    // test_cond("sdscmp(bar,bar)", sdscmp(x,y) == 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("bar");
+    y = sdsnew("bar");
+    test_cond("sdscmp(bar,bar)", sdscmp(x,y) == 0)
 
-    // sdsfree(y);
-    // sdsfree(x);
-    // x = sdsnew("aar");
-    // y = sdsnew("bar");
-    // test_cond("sdscmp(aar,bar)", sdscmp(x,y) < 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("aar");
+    y = sdsnew("bar");
+    test_cond("sdscmp(aar,bar)", sdscmp(x,y) < 0)
 
-    // sdsfree(y);
-    // sdsfree(x);
-    // x = sdsnew("bara");
-    // y = sdsnew("bar");
-    // test_cond("sdscmp(bara,bar)", sdscmp(x,y) > 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("bara");
+    y = sdsnew("bar");
+    test_cond("sdscmp(bara,bar)", sdscmp(x,y) > 0)
 
     // // sdsfree(y);
     // // sdsfree(x);
