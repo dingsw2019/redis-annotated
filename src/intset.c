@@ -4,7 +4,7 @@
 #include "intset.h"
 #include "zmalloc.h"
 #include "endianconv.h"
-#include <assert.h>
+#include <sys/time.h>
 
 /**
  * 编码方式
@@ -248,15 +248,13 @@ static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
     memmove(dst,src,byte);
 }
 
-
-
 /*--------------------- API --------------------*/
 
 /**
  * 创建并返回一个空整数结合
  * T = O(1)
  */
-intset *intsetNew(void){
+intset *intsetNew(void) {
 
     // 为整数集合分配内存空间
     intset *is = zmalloc(sizeof(*is));
@@ -280,7 +278,7 @@ intset *intsetNew(void){
  * 
  * T = O(N)
  */
-intset *intsetAdd(intset *is, int64_t value, uint8_t *success){
+intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
 
     // 获取 value 的编码凡是
     uint8_t valenc = _intsetValueEncoding(value);
@@ -322,10 +320,116 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success){
     return is;
 }
 
+/**
+ * 查找 value 是否存在于集合中
+ * 存在返回 1, 不存在返回 0
+ * 
+ * T = O(log N)
+ */
+uint8_t intsetFind(intset *is, int64_t value) {
+
+    // 计算编码方式
+    uint8_t valenc = _intsetValueEncoding(value);
+
+    // 如果 value 编码大于当前集合编码, 那么 value 一定不存在于集合
+    // 当 value 编码小于等于当前集合, 再进行查找
+
+    return valenc <= intrev32ifbe(is->encoding) && intsetSearch(is,value,NULL);
+}
+
+/**
+ * 从整数集合中删除值 value
+ * 
+ * *success 的值表示删除是否成功
+ * 删除失败或值不存在, 该值为 0
+ * 删除成功, 该值为 1
+ * 
+ * T = O(N)
+ */
+intset *intsetRemove(intset *is, int64_t value, int *success) {
+
+    // 计算 value 的编码方式
+    uint8_t valenc = _intsetValueEncoding(value);
+    uint32_t pos;
+
+    // 默认返回删除失败
+    if (success) *success = 0;
+
+    // 当前编码大于等于 value的编码空间, 再进行查找
+    if (valenc <= intrev32ifbe(is->encoding) && intsetSearch(is, value, &pos)) {
+
+        // 取出集合当前的元素数量
+        uint32_t len = intrev32ifbe(is->length);
+
+        // 默认返回删除成功
+        if (success) *success = 1;
+
+        // 移动元素,如果是最后一个元素就不用移动了
+        if (pos < (len-1)) intsetMoveTail(is,pos+1,pos);
+
+        // 重新分配内存空间, 缩小数组空间
+        is = intsetResize(is, len-1);
+
+        // 更新元素计数器
+        is->length = intrev32ifbe(len-1);
+    }
+
+    return is;
+}
+
+/**
+ * 取出集合底层数组指定位置的值, 并将它保存到 value 指针中
+ * 
+ * 取出值返回 1, 否则返回 0
+ * 
+ * T = O(1)
+ */
+uint8_t intsetGet(intset *is, uint32_t pos, int64_t *value) {
+
+    // 检查 pos 是否符合数组的范围
+    if (pos < intrev32ifbe(is->length)) {
+
+        // 保存值到指针
+        *value = _intsetGet(is, pos);
+
+        return 1;
+    }
+
+    // 超出索引范围
+    return 0;
+}
+
+/**
+ * 从整数集合中随机返回一个元素
+ * 只能在集合非空时使用
+ * 
+ * T = O(1)
+ */
+int64_t intsetRandom(intset *is) {
+    return _intsetGet(is, rand()%intrev32ifbe(is->length));
+}
+
+/**
+ * 返回整数集合现有的元素数量
+ */
+uint32_t intsetLen(intset *is) {
+    return intrev32ifbe(is->length);
+}
+
+/**
+ * 返回整数集合现在占用的字节总长度
+ * 总长度包含整数集合的结构大小,以及所有元素的大小
+ * 
+ * T = O(1)
+ */
+uint32_t intsetBlobLen(intset *is) {
+    return sizeof(intset)+intrev32ifbe(is->length)*intrev32ifbe(is->encoding);
+}
 
 // #ifdef INTSET_TEST_MAIN
 
 /*---------------------  --------------------*/
+
 /*--------------------- debug --------------------*/
 void intsetRepr(intset *is) {
     int i;
@@ -344,11 +448,63 @@ void ok(void){
     printf("OK\n");
 }
 
+intset *createSet(int bits, int size) {
+    uint64_t mask = (1<<bits)-1;
+    uint64_t i, value;
+    intset *is = intsetNew();
+
+    for (i = 0; i < size; i++) {
+        if (bits > 32) {
+            value = (rand()*rand()) & mask;
+        } else {
+            value = rand() & mask;
+        }
+        is = intsetAdd(is,value,NULL);
+    }
+    return is;
+}
+
+long long usec(void) {
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    return (((long long)tv.tv_sec)*1000000)+tv.tv_usec;
+}
+
+#define assert(_e) ((_e)?(void)0:(_assert(#_e,__FILE__,__LINE__),exit(1)))
+void _assert(char *estr, char *file, int line) {
+    printf("\n\n=== ASSERTION FAILED ===\n");
+    printf("==> %s:%d '%s' is not true\n",file,line,estr);
+}
+
+/**
+ * 检查元素值是否按顺序排列
+ */
+void checkConsistency(intset *is) {
+    int i;
+
+    for (i = 0; i < (intrev32ifbe(is->length)-1); i++) {
+        uint32_t encoding = intrev32ifbe(is->encoding);
+
+        if (encoding == INTSET_ENC_INT16) {
+            int16_t *i16 = (int16_t*)is->contents;
+            assert(i16[i] < i16[i+1]);
+        } else if (encoding == INTSET_ENC_INT32) {
+            int32_t *i32 = (int32_t*)is->contents;
+            assert(i32[i] < i32[i+1]);
+        } else {
+            int64_t *i64 = (int64_t*)is->contents;
+            assert(i64[i] < i64[i+1]);
+        }
+    }
+}
+
 // gcc -g zmalloc.c intset.c -D INTSET_TEST_MAIN
 int main(void) {
 
     uint8_t success;
+    int i;
     intset *is;
+    srand(time(NULL));
 
     // 确认编码范围
     printf("Value encodings: "); {
@@ -365,6 +521,7 @@ int main(void) {
         ok();
     }
 
+    // 添加相同编码长度的值
     printf("Basic adding: "); {
         is = intsetNew();
         is = intsetAdd(is,5,&success); assert(success);
@@ -374,7 +531,116 @@ int main(void) {
         ok();
     }
 
-    intsetRepr(is);
+    // 16编码方式下,随机添加 1024 次
+    // 检查元素值是否按顺序排列
+    printf("Large number of random adds: "); {
+        int inserts = 0;
+        is = intsetNew();
+        for (i = 0; i < 1024; i++) {
+            is = intsetAdd(is,rand()%0x800,&success);
+            if (success) inserts++;
+        }
+        assert(intrev32ifbe(is->length) == inserts);
+        checkConsistency(is);
+        ok();
+    }
+
+    // 升级编码方式(16 升级 32), 测试添加,查找是否正常
+    printf("Upgrade from int16 to int32: "); {
+        is = intsetNew();
+        is = intsetAdd(is,32,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT16);
+        is = intsetAdd(is,65535,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT32);
+        assert(intsetFind(is,32));
+        assert(intsetFind(is,65535));
+        checkConsistency(is);
+
+        is = intsetNew();
+        is = intsetAdd(is,32,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT16);
+        is = intsetAdd(is,-65535,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT32);
+        assert(intsetFind(is,32));
+        assert(intsetFind(is,-65535));
+        checkConsistency(is);
+        ok();
+    }
+
+    // 升级编码方式(16 升级 64), 测试添加,查找是否正常
+    printf("Upgrade from int16 to int64: "); {
+        is = intsetNew();
+        is = intsetAdd(is,32,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT16);
+        is = intsetAdd(is,4294967295,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT64);
+        assert(intsetFind(is,32));
+        assert(intsetFind(is,4294967295));
+        checkConsistency(is);
+
+        is = intsetNew();
+        is = intsetAdd(is,32,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT16);
+        is = intsetAdd(is,-4294967295,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT64);
+        assert(intsetFind(is,32));
+        assert(intsetFind(is,-4294967295));
+        checkConsistency(is);
+        ok();
+    }
+
+    // 升级编码方式(32 升级 64), 测试添加,查找是否正常
+    printf("Upgrade from int32 to int64: "); {
+        is = intsetNew();
+        is = intsetAdd(is,65535,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT32);
+        is = intsetAdd(is,4294967295,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT64);
+        assert(intsetFind(is,65535));
+        assert(intsetFind(is,4294967295));
+        checkConsistency(is);
+
+        is = intsetNew();
+        is = intsetAdd(is,65535,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT32);
+        is = intsetAdd(is,-4294967295,NULL);
+        assert(intrev32ifbe(is->encoding) == INTSET_ENC_INT64);
+        assert(intsetFind(is,65535));
+        assert(intsetFind(is,-4294967295));
+        checkConsistency(is);
+        ok();
+    }
+
+    // 
+    printf("Stress lookups: "); {
+        long num = 100000, size = 10000;
+        int i, bits = 20;
+        long long start;
+        is = createSet(bits,size);
+        checkConsistency(is);
+
+        start = usec();
+        for (i = 0; i < num; i++) intsetSearch(is,rand() % ((1<<bits)-1),NULL);
+        printf("%ld lookups, %ld element set, %lldusec\n",num,size,usec()-start);
+    }
+
+    // 添加和删除的压力测试
+    printf("Stress add+delete: "); {
+        int i, v1, v2;
+        is = intsetNew();
+        for (i = 0; i < 0xffff; i++) {
+            v1 = rand() % 0xfff;
+            is = intsetAdd(is,v1,NULL);
+            assert(intsetFind(is,v1));
+
+            v2 = rand() % 0xfff;
+            is = intsetRemove(is,v2,NULL);
+            assert(!intsetFind(is,v2));
+        }
+        checkConsistency(is);
+        ok();
+    }
+
 
     return 0;
 }
