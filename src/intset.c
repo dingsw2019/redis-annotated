@@ -80,15 +80,37 @@ static void _intsetSet(intset *is, int pos, int64_t value){
     // 跳转到索引 pos 指定位置,添加 value
     // 如果有需要的话,memrevEncifbe 进行大小端转换
     if (encoding == INTSET_ENC_INT64) {
-        ((uint64_t*)is->contents)[pos] = value;
-        memrev64ifbe(((uint64_t*)is->contents)+pos);
+        ((int64_t*)is->contents)[pos] = value;
+        memrev64ifbe(((int64_t*)is->contents)+pos);
     } else if (encoding == INTSET_ENC_INT32) {
-        ((uint32_t*)is->contents)[pos] = value;
-        memrev32ifbe(((uint64_t*)is->contents)+pos);
+        ((int32_t*)is->contents)[pos] = value;
+        memrev32ifbe(((int64_t*)is->contents)+pos);
     } else {
-        ((uint16_t*)is->contents)[pos] = value;
-        memrev16ifbe(((uint16_t*)is->contents)+pos);
+        ((int16_t*)is->contents)[pos] = value;
+        memrev16ifbe(((int16_t*)is->contents)+pos);
     }
+}
+
+/**
+ * 调整整数集合的内存空间大小
+ * 
+ * 如果调整后的空间大于原空间
+ * 那么集合中原有元素的值不会被改变
+ * 
+ * 返回调整后的整数集合
+ * 
+ * T = O(N) 疑问:为什么是 O(N) ? 难道不是 O(1)吗 ?
+ */
+static intset *intsetResize(intset *is,uint32_t len) {
+
+    // 计算数组空间长度
+    uint32_t size = len * intrev32ifbe(is->encoding);
+
+    // 重新分配数据空间
+    // 如果新长度大于旧长度,旧数据依然存在
+    is = zrealloc(is,sizeof(intset)+size);
+
+    return is;
 }
 
 /**
@@ -100,14 +122,13 @@ static void _intsetSet(intset *is, int pos, int64_t value){
  * 
  * T = O(long N)
  */
-static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos)
-{
+static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
     int min = 0, max = intrev32ifbe(is->length)-1, mid = -1;
     int64_t cur = -1;
 
     // 整数集合为空
     if (intrev32ifbe(is->length) == 0) {
-       if (pos) *pos = 0;
+        if (pos) *pos = 0;
         return 0;
     }
     // 整数集合不为空,优先判断边界值
@@ -130,9 +151,9 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos)
         mid = (max + min) / 2;
         cur = _intsetGet(is, mid);
         if (value < cur) {
-            max = mid + 1;
+            max = mid - 1;
         } else if (value > cur) {
-            min = mid - 1;
+            min = mid + 1;
         } else {
             break;
         }
@@ -147,6 +168,87 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos)
         return 0;
     }
 }
+
+/**
+ * 升级编码方式同时添加 value 到集合数组
+ */
+static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
+
+    // 当前的编码方式
+    uint8_t curenc = intrev32ifbe(is->encoding);
+
+    // 新值的编码方式
+    uint8_t newenc = _intsetValueEncoding(value);
+
+    // 当前集合的元素数量, 为迭代移动已有元素所用
+    int length = intrev32ifbe(is->length);
+
+    // 如果 value 是因为最大值超过当前编码,那就添加到最后面
+    // 如果 value 是因为最小值超过当前编码,那就添加到最前面
+    int prepend = (value < 0) ? 1 : 0;
+
+    // 更新集合编码方式
+    is->encoding = intrev32ifbe(newenc);
+
+    // 计算改用新编码方式后的空间大小
+    // 重新分配内存空间
+    is = intsetResize(is,intrev32ifbe(is->length)+1);
+
+    // 现有元素按新编码方式移动元素
+    // 从后向前移动, 因为空间大了, 后面一定是空的
+    while (length--)
+        _intsetSet(is,length+prepend,_intsetGetEncoded(is,length,curenc));
+
+    // 添加 value 到底层数组
+    if (prepend) {
+        _intsetSet(is,0,value);
+    } else {
+        _intsetSet(is,intrev32ifbe(is->length),value);
+    }
+
+    // 更新元素计数器
+    is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
+
+    return is;
+}
+
+/**
+ * 向前或向后移动元素
+ * 把 n 个元素从 from 索引位置移动到 to 索引位置
+ * 
+ * T = O(N)
+ */
+static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
+
+    void *src, *dst;
+
+    // 计算移动的元素数量
+    uint32_t byte = intrev32ifbe(is->length) - from;
+
+    // 通过编码方式,获取单元素长度
+    uint8_t encoding = intrev32ifbe(is->encoding);
+
+    // 计算起始位置,移动后的起始位置,移动长度
+    if (encoding == INTSET_ENC_INT64) {
+        src = ((int64_t*)is->contents)+from;
+        dst = ((int64_t*)is->contents)+to;
+        byte *= sizeof(int64_t);
+    } else if (encoding == INTSET_ENC_INT32) {
+        src = ((int32_t*)is->contents)+from;
+        dst = ((int32_t*)is->contents)+to;
+        byte *= sizeof(int32_t);
+    } else {
+        src = ((int16_t*)is->contents)+from;
+        dst = ((int16_t*)is->contents)+to;
+        byte *= sizeof(int16_t);
+    }
+
+    // 进行移动
+    // T = O(N)
+    memmove(dst,src,byte);
+}
+
+
 
 /*--------------------- API --------------------*/
 
@@ -184,9 +286,13 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success){
     uint8_t valenc = _intsetValueEncoding(value);
     uint32_t pos;
 
+    if (success) *success = 1;
+
     // value 编码方式大于当前编码方式
     if (valenc > intrev32ifbe(is->encoding)) {
-        
+
+        // 升级编码方式并添加新元素
+        return intsetUpgradeAndAdd(is,value);
     }
     // 当前编码方式适合 value
     else {
@@ -197,6 +303,14 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success){
             if (success) *success = 0;
             return is;
         }
+
+        // 走到这里,说明 value 可以添加到数据
+        // 集合数组扩容, 为 value 分配空间
+        is = intsetResize(is,intrev32ifbe(is->length)+1);
+
+        // 如果新元素不是添加到底层数组的末尾
+        // 那么需要移动现有元素, 空出 pos 索引位置, 用于设置新值
+        if (pos < intrev32ifbe(is->length)) intsetMoveTail(is,pos,pos+1);
     }
 
     // 添加 value 到集合
@@ -213,6 +327,14 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success){
 
 /*---------------------  --------------------*/
 /*--------------------- debug --------------------*/
+void intsetRepr(intset *is) {
+    int i;
+    for (i=0; i<intrev32ifbe(is->length); i++) {
+        printf("%lld\n",(uint64_t)_intsetGet(is,i));
+    }
+    printf("\n");
+}
+
 void error(char *err){
     printf("%s\n",err);
     exit(1);
@@ -223,8 +345,8 @@ void ok(void){
 }
 
 // gcc -g zmalloc.c intset.c -D INTSET_TEST_MAIN
-int main(void)
-{
+int main(void) {
+
     uint8_t success;
     intset *is;
 
@@ -245,12 +367,14 @@ int main(void)
 
     printf("Basic adding: "); {
         is = intsetNew();
-        // is = intsetAdd(is,5,&success); assert(success);
+        is = intsetAdd(is,5,&success); assert(success);
         is = intsetAdd(is,6,&success); assert(success);
         is = intsetAdd(is,4,&success); assert(success);
         is = intsetAdd(is,4,&success); assert(!success);
         ok();
     }
+
+    intsetRepr(is);
 
     return 0;
 }
