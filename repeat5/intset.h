@@ -3,15 +3,13 @@
 
 #include <stdint.h>
 
-typedef struct intset
-{
+typedef struct intset {
     // 编码方式
     uint32_t encoding;
     // 元素数量
-    uint32_t length;
-    // 存放元素数组
+    uint32_t lenght;
+    // 底层数组顺序存放元素
     int8_t contents[];
 } intset;
 
-
-#endif
+#endif 
