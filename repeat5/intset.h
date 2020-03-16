@@ -7,7 +7,7 @@ typedef struct intset {
     // 编码方式
     uint32_t encoding;
     // 元素数量
-    uint32_t lenght;
+    uint32_t length;
     // 底层数组顺序存放元素
     int8_t contents[];
 } intset;

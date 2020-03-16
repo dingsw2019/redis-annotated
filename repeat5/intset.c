@@ -30,15 +30,16 @@ static int64_t _intsetGetEncoded(intset *is, int pos, uint8_t enc) {
     int16_t v16;
 
     if (enc == INTSET_ENC_INT64) {
-        memcpy(&v64,intrev32ifbe(is->contents)+pos,sizeof(v64));
+        // memcpy(&v64,intrev32ifbe(is->contents)+pos,sizeof(v64)); myerr
+        memcpy(&v64,((int64_t*)is->contents)+pos,sizeof(v64));
         memrev64ifbe(&v64);
         return v64;
     } else if (enc == INTSET_ENC_INT32) {
-        memcpy(&v32,intrev32ifbe(is->contents)+pos,sizeof(v32));
+        memcpy(&v32,((int32_t*)is->contents)+pos,sizeof(v32));
         memrev32ifbe(&v32);
         return v32;
     } else {
-        memcpy(&v16,intrev32ifbe(is->contents)+pos,sizeof(v16));
+        memcpy(&v16,((int16_t*)is->contents)+pos,sizeof(v16));
         memrev16ifbe(&v16);
         return v16;
     }
@@ -53,7 +54,8 @@ static int64_t _intsetGet(intset *is, int pos) {
 static void _intsetSet(intset *is, int pos, int64_t value) {
 
     // 获取编码方式
-    uint8_t enc = intrev32ifbe(is->encoding);
+    // uint8_t enc = intrev32ifbe(is->encoding); myerr
+    uint32_t enc = intrev32ifbe(is->encoding);
     // 添加值
     if (enc == INTSET_ENC_INT64) {
         ((int64_t*)is->contents)[pos] = value;
@@ -71,11 +73,60 @@ static void _intsetSet(intset *is, int pos, int64_t value) {
 static intset *intsetResize(intset *is, uint32_t len) {
 
     // 元素内存大小计算
-    uint32_t size = len * intrev32ifbe(is->lenght);
+    uint32_t size = len * intrev32ifbe(is->encoding);
 
     is = zrealloc(is, sizeof(intset)+size);
 
     return is;
+}
+
+// 查找 value 
+// 找到返回 1, 并将索引位写入 pos 指针中
+// 未找到返回 0, 并将适合插入的索引位写入 pos 指针中
+static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
+
+    int min = 0, max = intrev32ifbe(is->length)-1, mid = -1;
+    int64_t cur = 1;
+    // 底层数组为空, 不继续查找
+    if (intrev32ifbe(is->length) == 0) {
+        if (pos) *pos = 0;
+        return 0;
+    }
+    // 数组非空
+    else {
+
+        // 边界查找
+        if (value > _intsetGet(is,intrev32ifbe(is->length)-1)) {
+            if (pos) *pos = intrev32ifbe(is->length);
+            return 0;
+        } else if (value < _intsetGet(is,0)) {
+            if (pos) *pos = 0;
+            return 0;
+        }
+    }
+    
+    // 二分查找
+    while (max >= min) {
+        mid = (max + min) / 2;
+        cur = _intsetGet(is,mid);
+
+        if (value > cur) {
+            min = mid+1;
+        } else if (value < cur){
+            max = mid-1;
+        } else {
+            break;
+        }
+    }
+
+    // 验证是否找到
+    if (value == cur) {
+        if (pos) *pos = mid;
+        return 1;
+    } else {
+        if (pos) *pos = min;
+        return 0;
+    }
 }
 
 // 升级编码方式并添加元素
@@ -90,11 +141,11 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
     // 向前还是向后添加新元素
     int prepend = (value < 0) ? 1 : 0;
 
-    int length = intrev32ifbe(is->lenght);
+    int length = intrev32ifbe(is->length);
 
     // 按新编码重新分配内存空间
     is->encoding = valenc;
-    is = intsetResize(is,intrev32ifbe(is->lenght)+1);
+    is = intsetResize(is,intrev32ifbe(is->length)+1);
 
     // 移动原有元素
     while (length--)
@@ -104,11 +155,11 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
     if (prepend) {
         _intsetSet(is,0,value);
     } else {
-        _intsetSet(is,intrev32ifbe(is->lenght),value);
+        _intsetSet(is,intrev32ifbe(is->length),value);
     }
 
     // 更新元素计数器
-    is->lenght = intrev32ifbe(intrev32ifbe(is->lenght)+1);
+    is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
 
     return is;
 
@@ -121,7 +172,7 @@ static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
     void *src, *dst;
 
     // 要移动的元素数量
-    uint32_t byte = intrev32ifbe(is->lenght) - from;
+    uint32_t byte = intrev32ifbe(is->length) - from;
 
     // 编码方式
     uint8_t enc = intrev32ifbe(is->encoding);
@@ -145,6 +196,7 @@ static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
 
 
 
+
 /*--------------------- API --------------------*/
 // 创建并返回一个空的整数集合
 intset *intsetNew(void) {
@@ -152,7 +204,7 @@ intset *intsetNew(void) {
     intset *is = zmalloc(sizeof(intset));
     // 初始化属性
     is->encoding = intrev32ifbe(INTSET_ENC_INT16);
-    is->lenght = 0;
+    is->length = 0;
 
     return is;
 }
@@ -160,20 +212,86 @@ intset *intsetNew(void) {
 // 添加一个新元素
 // 添加成功, 返回 1, success 为 1
 // 添加失败或 value 已存在, 返回 0, success 为 0
-intset *intsetAdd(intset *is, int64_t value, int *success) {
+intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
 
+    uint32_t pos;
+    // 计算 value 的编码方式
+    int8_t valenc = _intsetValueEncoding(value);
+
+    // 默认成功
+    if (success) *success = 1;
+
+    // 当前编码方式不满足 value 的情况
+    if (valenc > intrev32ifbe(is->encoding)) {
+        // 升级编码方式,并添加 value
+        return intsetUpgradeAndAdd(is,value);
+    }
+    // 当前编码方式满足
+    else {
+
+        // 查找 value是否存在于数组中
+        if(intsetSearch(is,value,&pos)) {
+            if (success) *success = 0;
+            return is;
+        }
+
+        // 底层数组扩容
+        is = intsetResize(is,intrev32ifbe(is->length)+1);
+
+        // 移动原有元素
+        // if (pos < intrev32ifbe(is->length)-1) intsetMoveTail(is,pos,pos+1); myerr
+        if (pos < intrev32ifbe(is->length)) intsetMoveTail(is,pos,pos+1);
+    }
+
+    // 添加 value
+    _intsetSet(is,pos,value);
+
+    // 更新元素计数器
+    is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
+
+    return is;
 }
 
 // 查找 value, 找到返回 1, 否则返回 0
 uint8_t intsetFind(intset *is, int64_t value) {
 
+    // 计算 value 的编码方式
+    uint8_t valenc = _intsetValueEncoding(value);
+    // 编码符合后再查找
+    return (valenc <= intrev32ifbe(is->encoding)) && intsetSearch(is,value,NULL);
 }
 
 // 删除元素值为 value 的元素
 // 删除成功 , 返回 1, success 为 1
 // 删除失败或未找到 , 返回 0, success 为 0
-uint8_t intsetRemove(intset *is, int64_t value, int *success) {
+intset *intsetRemove(intset *is, int64_t value, int *success) {
 
+    // 计算 value 的编码方式
+    uint8_t valenc = _intsetValueEncoding(value);
+    uint32_t pos;
+
+    // myerr : 缺少
+    if (success) *success = 0;
+
+    // 当前编码方式满足 value 再进行查找
+    if (valenc <= intrev32ifbe(is->encoding) && intsetSearch(is,value,&pos)) {
+
+        uint32_t len = intrev32ifbe(is->length);
+        
+        // myerr : 缺少
+        if (success) *success = 1;
+        // 移动元素, 覆盖删除的元素,如果不是最后一个元素
+        if (pos < len-1) intsetMoveTail(is,pos+1,pos);
+
+        // 缩小数组内存空间
+        // intsetResize(is,len-1); myerr
+        is = intsetResize(is,len-1);
+
+        // 更新元素计数器
+        is->length = intrev32ifbe(len-1);
+    }
+
+    return is;
 }
 
 /*--------------------- debug --------------------*/

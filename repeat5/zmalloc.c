@@ -2,7 +2,7 @@
 #include <pthread.h>
 #include "zmalloc.h"
 
-#define PREFIX_SIZE sizeof(long)
+#define PREFIX_SIZE sizeof(size_t)
 
 #define update_zmalloc_stat_add(_n) do{ \
     pthread_mutex_lock(&used_memory_mutex); \
@@ -84,13 +84,14 @@ void *zrealloc(void *ptr,size_t size){
 
     if (ptr == NULL) return zmalloc(size);
 
-    realptr = ptr - PREFIX_SIZE;
+    realptr = (char*)ptr - PREFIX_SIZE;
 
-    newptr = realloc(realptr,size);
+    old_size = *((size_t*)realptr);
+
+    newptr = realloc(realptr,size+PREFIX_SIZE);
     if (!newptr) zmalloc_handler_oom(size);
 
     *((size_t*)newptr) = size;
-    old_size = *((size_t*)realptr);
 
     // 更新统计内存量
     update_zmalloc_stat_free(old_size);
@@ -98,6 +99,33 @@ void *zrealloc(void *ptr,size_t size){
 
     return (char*)newptr+PREFIX_SIZE;
 }
+// void *zrealloc(void *ptr,size_t size){
+    
+//     void *realptr;
+//     size_t oldsize;
+//     void *newptr;
+
+//     //原地址不存在,直接申请空间
+//     if (ptr == NULL) return zmalloc(size);
+
+//     //真实起始地址
+//     realptr = (char*)ptr-PREFIX_SIZE;
+//     //获取sdshdr结构体的大小
+//     oldsize = *((size_t*)realptr);
+//     //新的起始地址
+//     newptr = realloc(realptr,size+PREFIX_SIZE);
+//     //内存不足,抛出异常
+//     if(!newptr) zmalloc_handler_oom(size);
+//     //存储size
+//     *((size_t*)newptr) = size;
+
+//     //内存用量统计,减旧size,增新size
+//     update_zmalloc_stat_free(oldsize);
+//     update_zmalloc_stat_alloc(size);
+
+//     //去除数据头,返回sdshdr结构体部分
+//     return (char*)newptr+PREFIX_SIZE;
+// }
 
 void zfree(void *ptr){
     void *realptr;
