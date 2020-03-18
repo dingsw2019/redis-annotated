@@ -20,9 +20,7 @@
 
 /*--------------------- private --------------------*/
 
-// 迭代方向
-#define ZIPLIST_HEAD 0
-#define ZIPLIST_TAIL 1
+
 
 /**
  * ziplist 标识符
@@ -35,15 +33,19 @@
 /**
  * 字符串编码和整数编码的掩码
  */
+// ‭1100 0000‬
 #define ZIP_STR_MASK 0xc0
+// ‭0011 0000‬
 #define ZIP_INT_MASK 0x30
 
 /**
- * 节点编码类型为字符串 ??咋用
+ * 节点编码类型为字符串
  * 字符串编码的类型
  */
 #define ZIP_STR_06B (0 << 6)
+// ‭0100 0000‬
 #define ZIP_STR_14B (1 << 6)
+// ‭1000 0000‬
 #define ZIP_STR_32B (2 << 6)
 
 /**
@@ -320,11 +322,11 @@ int main(void) {
         // srand(atoi(argv[1]));
     srand(time(NULL));
     
-    printf("0<<4=%d\n",0<<4);
-    printf("1<<4=%d\n",1<<4);
-    printf("2<<4=%d\n",2<<4);
-    printf("3<<4=%d\n",3<<4);
-    printf("4<<4=%d\n",4<<4);
+    printf("0<<6=%d\n",0<<6);
+    printf("1<<6=%d\n",1<<6);
+    printf("2<<6=%d\n",2<<6);
+    // printf("3<<4=%d\n",3<<4);
+    // printf("4<<4=%d\n",4<<4);
     // zl = createIntList();
     // ziplistRepr(zl);
 
