@@ -7,6 +7,14 @@
 
 #define ZIP_END 255
 
+#define ZIP_INT_IMM_MIN 0xf1
+#define ZIP_INT_IMM_MAX 0xfd
+
+#define INT24_MAX 0x7fffff
+#define INT24_MIN (-INT24_MAX - 1)
+
+#define ZIP_IS_STR(enc) (((enc) & ZIP_STR_MASK) < ZIP_STR_MASK)
+
 // 定位到 ziplist 的 bytes 属性，该属性记录了整个 ziplist 所占用的内存字节数
 // 用于取出 bytes 属性的现有值，或者为 bytes 属性赋予新值
 #define ZIPLIST_BYTES(zl)       (*((uint32_t*)(zl)))
