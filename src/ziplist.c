@@ -598,7 +598,7 @@ static unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsig
 
         // 如果新节点的后面有多于一个节点
         // 那么程序需要将 nextdiff 也计算到表尾偏移量中
-        // 这样才能让表尾偏移量正确对齐表尾节点 ?? 没懂
+        // 这样才能让表尾偏移量正确对齐表尾节点
         tail = zipEntry(p+reqlen);    
         if (p[reqlen+tail.headersize+tail.len] != ZIP_END) {
             ZIPLIST_TAIL_OFFSET(zl) = 

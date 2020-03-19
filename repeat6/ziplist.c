@@ -125,3 +125,90 @@ static zlentry zipEntry(unsigned char *p) {
 
     return e;
 }
+
+// 在 p 指向的位置上添加节点
+static unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned char *s, unsigned int slen) {
+
+    size_t curlen = intrev32ifbe(ZIPLIST_BYTES(zl)), offset, reqlen, prevlen;
+    int nextdiff,encoding = 0, value;
+    zlentry entry, tail;
+
+    // 计算前置节点的长度
+    if (p[0] != ZIP_END) {
+        // 走到这里说明 p 之后有节点
+        // 这个节点就是新节点的前置节点,获取它的长度
+        entry = zipEntry(p);
+        prevlen = entry.prevrawlen;
+    } else {
+        // 判断列表是否无节点
+        unsigned char *ptail = ZIPLIST_ENTRY_TAIL(zl);
+        if (ptail[0] != ZIP_END) {
+
+            // 新节点的前置节点是尾节点
+            // prevlen = 
+        }
+    }
+
+    // 尝试将 s 转换成整数,如果它是字符串数字的话
+    // 获取节点值的长度
+    if (zipTry(s,slen,&encoding,&value)) {
+        reqlen = zipIntSize(encoding);
+    } else {
+        reqlen = slen;
+    }
+
+    // 计算编码前置节点长度的大小
+    reqlen += zipPrevEncodingLength(NULL, prevlen);
+    // 计算编码当前节点长度的大小
+    reqlen += zipEncodingLength(NULL, encoding, value);
+
+    // 新节点的后置节点的prev 是否足够
+    nextdiff = reqlen < ZIP_BIGLEN ? 0 : zipPrevLenByteDiff(p, reqlen);
+
+    // 扩容
+    offset = p - zl;
+    zl = zipResize(zl, curlen+reqlen+nextdiff);
+    p = zl + offset;
+
+    // 如果新节点不是添加到尾节点
+    if (p[0] != ZIP_END) {
+
+        // 移动原有节点, 给新节点腾出空间
+        memmove(p+reqlen,p-nextdiff,offset-1+nextdiff);
+        // 更新到达尾节点的偏移量
+        ZIPLIST_TAIL_OFFSET(zl) = 
+            intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+reqlen);
+        // 如果新节点之后有多个节点
+        // 尾节点偏移量还要加上 nextdiff
+        tail = p+reqlen;
+        if (p[reqlen+tail.prevrawlensize+tail.lensize] != ZIP_END) {
+            ZIPLIST_TAIL_OFFSET(zl) = 
+                intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+nextdiff);
+        }
+
+    // 新节点是尾节点
+    } else {   
+        // 更新总长度
+        ZIPLIST_BYTES(zl) = 
+            intrev32ifbe(intrev32ifbe(ZIPLIST_BYTES(zl))+reqlen);
+    }
+
+    // 前置节点长度写入
+    zipPrevEncodingLength(p, prevlen);
+
+    // 当前节点长度写入
+    zipEncodingLength(p, encoding, value);
+
+    // 节点值写入
+    if (ZIP_IS_STR(encoding)) {
+        memcopy(p,s,reqlen);
+    } else {
+        zipSaveInterge(p,value);
+    }
+
+    // 更新节点计数器
+    ZIPLIST_LENGTH(zl) = 
+        intrev32ifbe(intrev32ifbe(ZIPLIST_LENGTH(zl))+1);
+
+    return zl;
+}
