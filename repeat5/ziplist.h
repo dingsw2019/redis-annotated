@@ -23,23 +23,31 @@
 
 // 24 位整数的值域
 #define INT24_MAX 0x7fffff
-#define INT24_MIN (-INT24MAX - 1)
+#define INT24_MIN (-INT24_MAX - 1)
 
 // 4 位整数的值域
+#define ZIP_INT_IMM_MASK 0x0f
 #define ZIP_INT_IMM_MIN 0xf1
 #define ZIP_INT_IMM_MAX 0xfd
 
 // 列表总长度
-#define ZIPLIST_BYTES(zl) (*((uint32_t)(zl)))
+#define ZIPLIST_BYTES(zl) (*((uint32_t*)(zl)))
 // 尾节点偏移量
-#define ZIPLIST_TAIL_OFFSET (*((uint32_t)((zl)+sizeof(uint32_t))))
+#define ZIPLIST_TAIL_OFFSET(zl) (*((uint32_t*)((zl)+sizeof(uint32_t))))
 // 节点总数
-#define ZIPLIST_LENGTH (*((uint32_t)((zl)+sizeof(uint32_t)*2)))
+// #define ZIPLIST_LENGTH(zl) (*((uint32_t*)((zl)+sizeof(uint32_t)*2))) myerr
+#define ZIPLIST_LENGTH(zl) (*((uint16_t*)((zl)+sizeof(uint32_t)*2)))
 // 尾节点
-#define ZIPLIST_ENTRY_TAIL ((zl)+ZIPLIST_TAIL_OFFSET(zl))
-
+// #define ZIPLIST_ENTRY_TAIL(zl) ((zl)+ZIPLIST_TAIL_OFFSET(zl)) myerr
+#define ZIPLIST_ENTRY_TAIL(zl) ((zl)+intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl)))
 // 是否字符型
 #define ZIP_IS_STR(enc) (((enc) & ZIP_STR_MASK) < ZIP_STR_MASK)
+
+// 获取编码
+#define ZIP_DECODE_ENCODING(p, encoding) do{                    \
+    (encoding) = p[0];                                          \
+    if ((encoding) & ZIP_STR_MASK) encoding &= ZIP_STR_MASK;    \
+}while(0) 
 
 typedef struct zlentry {
 
