@@ -280,6 +280,22 @@ static unsigned int zipPrevEncodeLength(unsigned char *p, unsigned int len) {
 }
 
 /**
+ * 将一个不需要 5 字节存储的长度, 放到 5 字节中
+ */
+static void zipPrevEncodeLengthForceLarge(unsigned char *p, unsigned int len) {
+
+    if (p == NULL) return ;
+
+    // 5 字节标识符
+    p[0] = ZIP_BIGLEN;
+
+    // 写入长度
+    memcpy(p+1,&len,sizeof(len));
+    // 大小端转换
+    memrev32ifbe(p+1);
+}
+
+/**
  * 解码 ptr 指针
  * 取出编码前置节点长度所需的字节数, 并将它保存到 prevlensize 变量中
  * 
@@ -503,6 +519,8 @@ static zlentry zipEntry(unsigned char *p) {
 
     return e;
 }
+
+
 
 /**
  * 检查并执行连锁更新

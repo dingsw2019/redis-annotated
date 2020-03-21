@@ -297,6 +297,96 @@ static void zipSaveInteger(unsigned char *p, int64_t value, unsigned char encodi
     }
 }
 
+// 添加新节点, 新节点长度编码超过其后置节点的prevlensize, 就要扩充 prevlensize 的字节大小
+// 更新了 next 的prevlensize, 可能还需要更新 next 的下一个节点的 prevlensize, 依次类推
+// 删除节点同理, 但是不会扩容。只变更 prevlen
+// 返回更改后的压缩列表
+static unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
+
+    size_t curlen = intrev32ifbe(ZIPLIST_BYTES(zl)), rawlen, rawlensize;
+    size_t offset, noffset, extra;
+    unsigned char *np;
+    zlentry cur, next;
+
+    // 迭代更新
+    while (p[0] != ZIP_END) {
+
+        // 获取当前节点的基础数据
+        cur = zipEntry(p);
+
+        // 计算当前节点占用的字节数
+        rawlen = cur.headersize + cur.len;
+
+        rawlensize = zipPrevEncodeLength(NULL,rawlen);
+
+        // 是否存在下一个节点
+        // 不存在说明不会出现连锁更新了, 跳出循环
+        if (p[rawlen] == ZIP_END)  break;
+
+        // 获取下一个节点
+        next = zipEntry(p+rawlen);
+
+        // next 的前置节点长度完全等于 cur 的长度
+        // 那就啥也不用更新了, see goodbye
+        if (rawlen == next.prevrawlen) break;
+
+        // cur 的字节数大于 next 的前置节点字节数
+        if (next.prevrawlensize < rawlensize) {
+
+            // 计算字节数差值
+            extra = rawlensize - next.prevrawlensize;
+
+            offset = p - zl;
+        
+            // 扩容内存空间
+            zl = ziplistResize(zl, curlen+extra);
+            p = zl + offset;
+
+            np = p+rawlen;
+            noffset = np - zl;
+
+            // 如果 next 不是尾节点
+            // 那么更新尾节点的偏移量
+            if (zl+intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl)) != np) {
+                ZIPLIST_TAIL_OFFSET(zl) = 
+                    intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+extra);
+            }
+
+            // 移动 cur 之后的数据
+            // 给 next 的 prevlensize 腾空间
+            // memmove(np+rawlensize, np+next.prevrawlensize, curlen-noffset-1-extra); myerr
+            memmove(np+rawlensize, np+next.prevrawlensize, curlen-noffset-1-next.prevrawlensize);
+
+            // 将前置节点长度写入 next 节点
+            zipPrevEncodeLength(np,rawlen);
+
+            // 处理下一个节点
+            p = p+rawlen;
+            curlen += extra;
+        // 
+        } else {
+
+            // cur 的字节数小于 next 的前置节点字节数
+            // 只更新前置节点长度
+            if (next.prevrawlensize > rawlensize) {
+                zipPrevEncodeLengthForceLarge(p+rawlen,rawlen);
+            }
+
+            // cur 的字节数等于 next 的前置节点字节数
+            // 只更新前置节点长度
+            if (next.prevrawlensize == rawlensize) {
+                // zipPrevEncodeLength(p, rawlen); myerr
+                zipPrevEncodeLength(p+rawlen, rawlen);
+            }
+
+            // 跳出循环
+            break;
+        }
+    }   
+
+    return zl;
+}
+
 // 在 p 指向的位置上添加节点
 static unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned char *s, unsigned int slen) {
 
@@ -376,6 +466,12 @@ static unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsig
             // intrev32ifbe(intrev32ifbe(ZIPLIST_BYTES(zl))+reqlen);
 
         ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(p-zl);
+    }
+
+    // 执行连锁更新
+    if (nextdiff != 0) {
+        zl = __ziplistCascadeUpdate(zl, p);
+        p = zl + offset;
     }
 
     // 前置节点长度写入
