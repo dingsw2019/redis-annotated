@@ -520,7 +520,131 @@ static zlentry zipEntry(unsigned char *p) {
     return e;
 }
 
+/**
+ * 从位置 p 开始, 连续删除 num 个节点
+ * 返回删除后的压缩列表
+ * 
+ * T = O(N^2)
+ */
+static unsigned char *__ziplistDelete(unsigned char *zl, unsigned char *p, unsigned int num) {
 
+    unsigned int i, totlen, deleted=0;
+    size_t offset;
+    int nextdiff = 0;
+    zlentry first, tail;
+
+    // 获取删除的第一个节点的信息
+    first = zipEntry(p);
+
+    // 遍历删除节点, 计算实际删除节点数,获取删除的最后一个节点
+    for (i=0; p[0] != ZIP_END && i < num; i++) {
+        p += zipRawEntryLength(p);
+        deleted++;
+    }
+
+    // 计算删除的总字节数
+    totlen = p - first.p;
+    // 删除字节数 > 0 再进行后续处理
+    if (totlen > 0) {
+
+        // 删除的最后一个节点之后还有节点
+        if (p[0] != ZIP_END) {
+
+            // 计算删除的最后一个节点的下一个节点的 prevlensize
+            // 能否存储删除的第一个节点的前一个节点的长度
+            nextdiff = zipPrevLenByteDiff(p,first.prevrawlen);
+
+            // 是否需要前移, 给扩容 prevlensize 留空间
+            p -= nextdiff;
+
+            // 将 first 的前置节点的长度编码至 p 中
+            zipPrevEncodeLength(p, first.prevrawlen);
+
+            // 更新尾节点偏移量
+            ZIPLIST_TAIL_OFFSET(zl) = 
+                intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))-totlen);
+
+            // 如果删除的最后一个节点之后有一个以上的节点
+            // nextdiff 也要加到尾节点偏移量
+            tail = zipEntry(p);
+            if (p[tail.headersize+tail.len] != ZIP_END) {
+                ZIPLIST_TAIL_OFFSET(zl) = 
+                    intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+nextdiff);
+            }
+
+            // 移动原数据, 覆盖删除的字节 ??
+            memmove(first.p,p,
+                intrev32ifbe(ZIPLIST_BYTES(zl))-(p-zl)-1);
+        
+        // 已经删到末端标识符了
+        } else {
+            // 更新尾节点偏移量
+            ZIPLIST_TAIL_OFFSET(zl) = 
+                intrev32ifbe((first.p-zl)-first.prevrawlen);
+        }
+
+        // 释放删除的节点的内容空间
+        offset = first.p - zl;
+        ziplistResize(zl, intrev32ifbe(ZIPLIST_BYTES(zl))-totlen+nextdiff);
+        ZIPLIST_INCR_LENGTH(zl, -deleted);
+        p = zl + offset;
+
+        // 连锁更新
+        if (nextdiff != 0)
+            __ziplistCascadeUpdate(zl, p);
+    }
+
+    return zl;
+}
+
+
+
+/*--------------------- API --------------------*/
+/**
+ * 创建并返回一个空的压缩列表
+ */
+unsigned char *ziplistNew(void) {
+
+    // 空列表的总字节数
+    // ZIPLIST_HEADER_SIZE 是表头的大小
+    // +1 是 ZIP_END 的大小
+    unsigned int bytes = ZIPLIST_HEADER_SIZE+1;
+
+    // 为表头和ZIP_END 申请内存空间
+    unsigned char *zl = zmalloc(bytes);
+
+    // 初始化属性
+    ZIPLIST_BYTES(zl) = intrev32ifbe(bytes);
+    ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(ZIPLIST_HEADER_SIZE);
+    ZIPLIST_LENGTH(zl) = 0;
+
+    // 设置表末端标识符
+    zl[bytes-1] = ZIP_END;
+
+    // 返回
+    return zl;
+}
+
+/**
+ * 调整压缩列表的大小为 len 字节
+ * 
+ * 当 ziplist 原长度小于 len 时, 扩展后的现有元素不会改变
+ * 
+ * T = O(N)
+ */
+static unsigned char *ziplistResize(unsigned char *zl, unsigned int len) {
+
+    // realloc, 扩容不改变现有元素
+    zl = zrealloc(zl, len);
+
+    // 更新列表总字节数
+    ZIPLIST_BYTES(zl) = intrev32ifbe(len);
+
+    // 更新列表末端标识符
+    zl[len-1] = ZIP_END;
+
+    return zl;
+}
 
 /**
  * 检查并执行连锁更新
@@ -602,53 +726,6 @@ static unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p
             break;
         }
     }
-
-    return zl;
-}
-
-/*--------------------- API --------------------*/
-/**
- * 创建并返回一个空的压缩列表
- */
-unsigned char *ziplistNew(void) {
-
-    // 空列表的总字节数
-    // ZIPLIST_HEADER_SIZE 是表头的大小
-    // +1 是 ZIP_END 的大小
-    unsigned int bytes = ZIPLIST_HEADER_SIZE+1;
-
-    // 为表头和ZIP_END 申请内存空间
-    unsigned char *zl = zmalloc(bytes);
-
-    // 初始化属性
-    ZIPLIST_BYTES(zl) = intrev32ifbe(bytes);
-    ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(ZIPLIST_HEADER_SIZE);
-    ZIPLIST_LENGTH(zl) = 0;
-
-    // 设置表末端标识符
-    zl[bytes-1] = ZIP_END;
-
-    // 返回
-    return zl;
-}
-
-/**
- * 调整压缩列表的大小为 len 字节
- * 
- * 当 ziplist 原长度小于 len 时, 扩展后的现有元素不会改变
- * 
- * T = O(N)
- */
-static unsigned char *ziplistResize(unsigned char *zl, unsigned int len) {
-
-    // realloc, 扩容不改变现有元素
-    zl = zrealloc(zl, len);
-
-    // 更新列表总字节数
-    ZIPLIST_BYTES(zl) = intrev32ifbe(len);
-
-    // 更新列表末端标识符
-    zl[len-1] = ZIP_END;
 
     return zl;
 }
@@ -800,12 +877,110 @@ unsigned char *ziplistPush(unsigned char *zl,unsigned char *s,unsigned int slen,
     return __ziplistInsert(zl,p,s,slen);
 }
 
+/**
+ * 返回给定索引对应的指针
+ * 正索引, 从表头向表尾遍历, >=0 为正索引
+ * 负索引, 从表尾向表头遍历, <=-1 为负索引
+ * 
+ * 索引值超范围或压缩列表为空, 返回 NULL
+ */
+unsigned char *ziplistIndex(unsigned char *zl, int index) {
 
+    unsigned char *p;
+    zlentry entry;
+
+    // 负索引
+    if (index < 0) {
+
+        // 遍历次数
+        index = (-index) - 1;
+
+        // 从尾节点开始遍历
+        p = ZIPLIST_ENTRY_TAIL(zl);
+
+        // 列表不为空
+        if (p[0] != ZIP_END) {
+
+            entry = zipEntry(p);
+
+            // 迭代遍历
+            while (entry.prevrawlen > 0 && index--) {
+                // 指针移动到前置节点
+                p -= entry.prevrawlen;
+                entry = zipEntry(p);
+            }
+        }
+
+    // 正索引
+    } else {
+
+        // 从头节点开始遍历
+        p = ZIPLIST_ENTRY_HEAD(zl);
+
+        // 迭代遍历
+        while (p[0] != ZIP_END && index--) {
+            // 指针移动到下一个节点
+            p += zipRawEntryLength(p);
+        }
+    }
+
+    return (p[0] == ZIP_END || index > 0) ? NULL : p;
+}
+
+/**
+ * 获取指针 p 指向的节点数据
+ * 如果节点保存的是字符串, 将字符串保存到 *sstr, 字符串长度保存在 *slen
+ * 如果节点保存的是整数, 将整数值保存到 *sval
+ *
+ * 节点存在,提取成功返回 1
+ * 节点为空或者不存在, 提取失败返回 0
+ */
+unsigned int ziplistGet(unsigned char *p, unsigned char **sstr, unsigned int *slen, long long *sval) {
+
+    zlentry entry;
+    // p 为空 , 或者指向末端终结符
+    // 无法提取节点, 返回
+    if (p == NULL || p[0] == ZIP_END) return 0;
+    
+    // 清空 sstr 
+    if (sstr) *sstr = NULL;
+
+    // 获取节点信息
+    entry = zipEntry(p);
+
+    // 字符串类型
+    if (ZIP_IS_STR(entry.encoding)) {
+
+        // 保存字符串内容和长度
+        if (sstr) {
+            *sstr = p+entry.headersize;
+            *slen = entry.len;
+        }
+    // 整数类型
+    } else {
+
+        // 保存整数值
+        if (sval) {
+            *sval = zipLoadInteger(p, entry.encoding); 
+        }
+    }
+
+    return 1;
+}
 
 /*--------------------- debug --------------------*/
 #include <sys/time.h>
 #include "adlist.h"
 #include "sds.h"
+
+unsigned char *createList() {
+    unsigned char *zl = ziplistNew();
+    zl = ziplistPush(zl, (unsigned char*)"foo", 3, ZIPLIST_TAIL);
+    zl = ziplistPush(zl, (unsigned char*)"quux", 4, ZIPLIST_TAIL);
+    zl = ziplistPush(zl, (unsigned char*)"hello", 5, ZIPLIST_HEAD);
+    zl = ziplistPush(zl, (unsigned char*)"1024", 4, ZIPLIST_TAIL);
+    return zl;
+}
 
 unsigned char *createIntList() {
     unsigned char *zl = ziplistNew();
@@ -817,12 +992,12 @@ unsigned char *createIntList() {
     zl = ziplistPush(zl, (unsigned char*)buf, strlen(buf), ZIPLIST_TAIL);
     sprintf(buf, "-100");
     zl = ziplistPush(zl, (unsigned char*)buf, strlen(buf), ZIPLIST_HEAD);
-    // sprintf(buf, "4294967296");
-    // zl = ziplistPush(zl, (unsigned char*)buf, strlen(buf), ZIPLIST_HEAD);
-    // sprintf(buf, "non integer");
-    // zl = ziplistPush(zl, (unsigned char*)buf, strlen(buf), ZIPLIST_TAIL);
-    // sprintf(buf, "much much longer non integer");
-    // zl = ziplistPush(zl, (unsigned char*)buf, strlen(buf), ZIPLIST_TAIL);
+    sprintf(buf, "4294967296");
+    zl = ziplistPush(zl, (unsigned char*)buf, strlen(buf), ZIPLIST_HEAD);
+    sprintf(buf, "non integer");
+    zl = ziplistPush(zl, (unsigned char*)buf, strlen(buf), ZIPLIST_TAIL);
+    sprintf(buf, "much much longer non integer");
+    zl = ziplistPush(zl, (unsigned char*)buf, strlen(buf), ZIPLIST_TAIL);
     return zl;
 }
 
@@ -894,8 +1069,8 @@ int main(void) {
     zl = createIntList();
     ziplistRepr(zl);
 
-    // zl = createList();
-    // ziplistRepr(zl);
+    zl = createList();
+    ziplistRepr(zl);
 
     // pop(zl,ZIPLIST_TAIL);
     // ziplistRepr(zl);
