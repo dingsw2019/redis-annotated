@@ -34,4 +34,9 @@ sds sdsnew(const char *init);
 int sdscmp(const sds s1, const sds s2);
 void sdsfree(sds s);
 
+sds sdstrim(sds s,const char *cset);
+sds sdscat(sds s,const char *t);
+void sdsrange(sds s,int start,int end);
+sds sdscatsds(sds s, const sds t);
+
 #endif
