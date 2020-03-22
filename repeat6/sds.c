@@ -1,4 +1,12 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <assert.h>
 #include "sds.h"
+#include "zmalloc.h"
+#include "testhelp.h"
+#include "limits.h"
 
 // 创建一个指定长度的 sds
 sds sdsnewlen(const char *init, size_t initlen)
@@ -99,6 +107,10 @@ sds sdscatlen(sds s,const void *t,size_t len)
 sds sdscat(sds s,const char *t)
 {
     return sdscatlen(s,t,strlen(t));
+}
+
+sds sdscatsds(sds s, const sds t){
+    return sdscatlen(s, t, strlen(t));
 }
 
 // t 的 len 长度的内容,赋值给s,并覆盖 s 原内容
@@ -248,101 +260,101 @@ int sdscmp(sds s1, sds s2)
 
 //执行: gcc -g zmalloc.c sds.c
 //执行: ./a.exe
-int main(void){
+// int main(void){
 
-    struct sdshdr *sh;
-    sds x = sdsnew("foo"), y;
-    test_cond("Create a string and obtain the length",
-        sdslen(x) == 3 && memcmp(x,"foo\0",4) == 0)
+//     struct sdshdr *sh;
+//     sds x = sdsnew("foo"), y;
+//     test_cond("Create a string and obtain the length",
+//         sdslen(x) == 3 && memcmp(x,"foo\0",4) == 0)
 
-    sdsfree(x);
-    x = sdsnewlen("foo",2);
-    test_cond("Create a string with specified length",
-        sdslen(x) == 2 && memcmp(x,"fo\0",3) == 0)
+//     sdsfree(x);
+//     x = sdsnewlen("foo",2);
+//     test_cond("Create a string with specified length",
+//         sdslen(x) == 2 && memcmp(x,"fo\0",3) == 0)
 
-    x = sdscat(x,"bar");
-    printf("%s\n",x);
-    test_cond("Strings concatenation",
-        sdslen(x) == 5 && memcmp(x,"fobar\0",6) == 0);
+//     x = sdscat(x,"bar");
+//     printf("%s\n",x);
+//     test_cond("Strings concatenation",
+//         sdslen(x) == 5 && memcmp(x,"fobar\0",6) == 0);
 
-    x = sdscpy(x,"a");
-    test_cond("sdscpy() against an originally longer string",
-        sdslen(x) == 1 && memcmp(x,"a\0",2) == 0)
+//     x = sdscpy(x,"a");
+//     test_cond("sdscpy() against an originally longer string",
+//         sdslen(x) == 1 && memcmp(x,"a\0",2) == 0)
 
-    x = sdscpy(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk");
-    test_cond("sdscpy() against an originally shorter string",
-        sdslen(x) == 33 &&
-        memcmp(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk\0",33) == 0)
+//     x = sdscpy(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk");
+//     test_cond("sdscpy() against an originally shorter string",
+//         sdslen(x) == 33 &&
+//         memcmp(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk\0",33) == 0)
 
-    // sdsfree(x);
-    // x = sdscatprintf(sdsempty(),"%d",123);
-    // test_cond("sdscatprintf() seems working in the base case",
-    //     sdslen(x) == 3 && memcmp(x,"123\0",4) == 0)
+//     // sdsfree(x);
+//     // x = sdscatprintf(sdsempty(),"%d",123);
+//     // test_cond("sdscatprintf() seems working in the base case",
+//     //     sdslen(x) == 3 && memcmp(x,"123\0",4) == 0)
     
-    sdsfree(x);
-    x = sdsnew("xxciaoyyy");
-    sdstrim(x,"xy");
-    test_cond("sdstrim() correctly trims characters",
-        sdslen(x) == 4 && memcmp(x,"ciao\0",5) == 0)
+//     sdsfree(x);
+//     x = sdsnew("xxciaoyyy");
+//     sdstrim(x,"xy");
+//     test_cond("sdstrim() correctly trims characters",
+//         sdslen(x) == 4 && memcmp(x,"ciao\0",5) == 0)
 
-    y = sdsdup(x);
-    sdsrange(y,1,1);
-    test_cond("sdsrange(...,1,1)",
-        sdslen(y) == 1 && memcmp(y,"i\0",2) == 0)
+//     y = sdsdup(x);
+//     sdsrange(y,1,1);
+//     test_cond("sdsrange(...,1,1)",
+//         sdslen(y) == 1 && memcmp(y,"i\0",2) == 0)
 
-    sdsfree(y);
-    y = sdsdup(x);
-    sdsrange(y,1,-1);
-    test_cond("sdsrange(...,1,-1)",
-        sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
+//     sdsfree(y);
+//     y = sdsdup(x);
+//     sdsrange(y,1,-1);
+//     test_cond("sdsrange(...,1,-1)",
+//         sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
 
-    sdsfree(y);
-    y = sdsdup(x);
-    sdsrange(y,-2,-1);
-    test_cond("sdsrange(...,-2,-1)",
-        sdslen(y) == 2 && memcmp(y,"ao\0",3) == 0)
+//     sdsfree(y);
+//     y = sdsdup(x);
+//     sdsrange(y,-2,-1);
+//     test_cond("sdsrange(...,-2,-1)",
+//         sdslen(y) == 2 && memcmp(y,"ao\0",3) == 0)
 
-    sdsfree(y);
-    y = sdsdup(x);
-    sdsrange(y,2,1);
-    test_cond("sdsrange(...,2,1)",
-        sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
+//     sdsfree(y);
+//     y = sdsdup(x);
+//     sdsrange(y,2,1);
+//     test_cond("sdsrange(...,2,1)",
+//         sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
 
-    sdsfree(y);
-    y = sdsdup(x);
-    sdsrange(y,1,100);
-    test_cond("sdsrange(...,1,100)",
-        sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
+//     sdsfree(y);
+//     y = sdsdup(x);
+//     sdsrange(y,1,100);
+//     test_cond("sdsrange(...,1,100)",
+//         sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
 
-    sdsfree(y);
-    y = sdsdup(x);
-    sdsrange(y,100,100);
-    test_cond("sdsrange(...,100,100)",
-        sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
+//     sdsfree(y);
+//     y = sdsdup(x);
+//     sdsrange(y,100,100);
+//     test_cond("sdsrange(...,100,100)",
+//         sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
 
-    sdsfree(y);
-    sdsfree(x);
-    x = sdsnew("foo");
-    y = sdsnew("foa");
-    test_cond("sdscmp(foo,foa)", sdscmp(x,y) > 0)
+//     sdsfree(y);
+//     sdsfree(x);
+//     x = sdsnew("foo");
+//     y = sdsnew("foa");
+//     test_cond("sdscmp(foo,foa)", sdscmp(x,y) > 0)
 
-    sdsfree(y);
-    sdsfree(x);
-    x = sdsnew("bar");
-    y = sdsnew("bar");
-    test_cond("sdscmp(bar,bar)", sdscmp(x,y) == 0)
+//     sdsfree(y);
+//     sdsfree(x);
+//     x = sdsnew("bar");
+//     y = sdsnew("bar");
+//     test_cond("sdscmp(bar,bar)", sdscmp(x,y) == 0)
 
-    sdsfree(y);
-    sdsfree(x);
-    x = sdsnew("aar");
-    y = sdsnew("bar");
-    test_cond("sdscmp(aar,bar)", sdscmp(x,y) < 0)
+//     sdsfree(y);
+//     sdsfree(x);
+//     x = sdsnew("aar");
+//     y = sdsnew("bar");
+//     test_cond("sdscmp(aar,bar)", sdscmp(x,y) < 0)
 
-    sdsfree(y);
-    sdsfree(x);
-    x = sdsnew("bara");
-    y = sdsnew("bar");
-    test_cond("sdscmp(bara,bar)", sdscmp(x,y) > 0)
+//     sdsfree(y);
+//     sdsfree(x);
+//     x = sdsnew("bara");
+//     y = sdsnew("bar");
+//     test_cond("sdscmp(bara,bar)", sdscmp(x,y) > 0)
 
     // // sdsfree(y);
     // // sdsfree(x);
@@ -373,5 +385,5 @@ int main(void){
     // argv = sdssplitargs(line, &count);
     // sdsSplitArgsPrint(line,argv,count);
 
-    return 0;
-}
+//     return 0;
+// }	
