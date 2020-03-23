@@ -795,6 +795,40 @@ unsigned char *ziplistDeleteRange(unsigned char *zl, unsigned int index, unsigne
     return (p == NULL) ? zl : __ziplistDelete(zl,p,num);
 }
 
+// p 指向的节点值与 sstr比较
+// 相同返回 1, 否则返回 0
+unsigned int ziplistCompare(unsigned char *p, unsigned char *sstr, unsigned int slen) {
+
+    unsigned char sencoding = 0;
+    long long sval,zval;
+    // 获取 p 的节点
+    zlentry entry = zipEntry(p);
+
+    // 字符串
+    if (ZIP_IS_STR(entry.encoding)) {
+
+        // 长度不同, 返回 0
+        if (entry.lensize != slen) {
+            return 0;
+        } else {
+        // 长度相同, 比较内容
+            // return memcmp(entry.p, sstr, slen) == 0; myerr
+            return memcmp(p+entry.headersize, sstr, slen) == 0;
+        }
+    // 整数
+    } else {
+        // 转换 sstr 的整数化
+        if (zipTryEncoding(sstr,slen,&sval,&sencoding)) {
+
+            zval = zipLoadInteger(p, entry.encoding);
+
+            return sval == zval;
+        }
+    }
+
+    return 0;
+}
+
 // 寻找节点值和 vstr 相同的列表节点
 // 跳跃查找, 每次跳 skip 个节点查找一次
 // 找到返回节点指针, 未找到返回 NULL
@@ -883,6 +917,11 @@ unsigned int ziplistLen(unsigned char *zl) {
     }
 
     return len;
+}
+
+// 压缩列表总字节数
+size_t ziplistBlobLen(unsigned char *zl) {
+    return intrev32ifbe(ZIPLIST_BYTES(zl));
 }
 
 /*--------------------- debug --------------------*/
