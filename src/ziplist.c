@@ -1082,7 +1082,6 @@ unsigned int ziplistCompare(unsigned char *p, unsigned char *sstr, unsigned int 
     // 整数
     } else {
         
-        long long vll;
         // 给 sstr 解码, 获取整数值和编码
         if (zipTryEncoding(sstr,slen,&sval,&sencoding)) {
             // 获取节点的整数值
