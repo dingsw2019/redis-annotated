@@ -436,8 +436,10 @@ static void zipSaveInteger(unsigned char *p, int64_t value, unsigned char encodi
     } else if (encoding == ZIP_INT_24B) {
         i32 = value<<8;
         memrev32ifbe(&i32);
-        // ?? ((uint8_t*)&i32)+1 不懂, 不应该是 ((uint8_t*)&i32) 取前 3位
-        // 加 1 不就变成 第2字节开始取值了吗, 第4字节是空的
+        // 比如 value 的二进制为 1001 0101 0000 0111 0001 1011
+        // i32 的二进制为        1001 0101 0000 0111 0001 1011 0000 0000
+        // uint8_t之后i32索引   <--  3 --><--  2 --><--  1 --><--  0 -->
+        // 复制后的p的对应关系   <-- p2 --><-- p1 --><-- p0 -->
         memcpy(p,((uint8_t*)&i32)+1,sizeof(i32)-sizeof(uint8_t));
     } else if (encoding == ZIP_INT_32B) {
         i32 = value;
@@ -473,6 +475,12 @@ static int64_t zipLoadInteger(unsigned char *p, unsigned char encoding) {
         ret = i16;
     } else if (encoding == ZIP_INT_24B) {
         i32 = 0;
+        // 比如 p 的二进制为   1001 0101 0000 0111 0001 1011
+        // p 的索引关系       <-- p2 --><-- p1 --><-- p0 -->
+        // i32 现在的值       0000 0000 0000 0000 0000 0000 0000 0000
+        // uint8_t之后i32索引 <--  3 --><--  2 --><--  1 --><--  0 -->
+        // 复制之后的 i32      1001 0101 0000 0111 0001 1011 0000 0000
+        // 右移后的 i32        1001 0101 0000 0111 0001 1011
         memcpy(((uint8_t*)&i32)+1,p,sizeof(i32)-sizeof(uint8_t));
         memrev32ifbe(&i32);
         ret = i32>>8;
