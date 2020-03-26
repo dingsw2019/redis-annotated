@@ -293,6 +293,139 @@ static unsigned char *ziplistResize(unsigned char *zl, unsigned int len) {
     return zl;
 }
 
+// 连锁更新,新增或删除节点时, 会影响后置节点的prevlensize
+// 如果新增导致当前 prevlensize 无法满足, 需要扩容
+// 删除不会更改 prevlensize 空间大小, 只更改长度
+static unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
+
+    size_t curlen = intrev32ifbe(ZIPLIST_BYTES(zl)), offset, noffset;
+    unsigned int rawlensize, rawlen;
+    unsigned char *np;
+    int extra = 0;
+
+    zlentry cur, next;
+
+    while (p[0] != ZIP_END) {
+        
+        // 当前节点信息
+        cur = zipEntry(p);
+        // 节点长度
+        rawlen = cur.headersize + cur.len;
+        // 节点长度占的字节数
+        rawlensize = zipPrevEncodeLength(NULL,rawlen);
+
+        // 下一个节点是否存在
+        if (p[rawlen] == ZIP_END) break;
+
+        // 获取后置节点信息
+        next = zipEntry(p+rawlen);
+
+        // 后置节点的 prevlensize 不满足当前长度存储
+        if (next.prevrawlensize < rawlensize) {
+            
+            // 计算差值
+            extra = rawlensize - next.prevrawlensize;
+
+            // 记录当前节点偏移量, 扩容
+            offset = p - zl;
+            ziplistResize(zl, curlen+extra);
+            p = zl + offset;
+
+            // 计算后置节点偏移量
+            np = p+rawlen;
+            noffset = np - zl;
+
+            // 后置节点不是尾节点, 更新尾节点偏移量
+            if (zl+intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl)) != np) {
+                ZIPLIST_TAIL_OFFSET(zl) = 
+                    intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+extra);
+            }
+
+            // 移动原数据
+            memmove(np+rawlen, 
+                    np+next.prevrawlensize, 
+                    curlen-noffset-next.prevrawlensize-1);
+
+            // 更新前置节点长度
+            zipPrevEncodeLength(np, rawlen);
+
+            // 处理下一个节点
+            p += rawlen;
+            curlen += extra;
+        } else {
+
+            if (next.prevrawlensize > rawlensize) {
+                zipPrevEncodeLengthForceLarge(p+rawlen, rawlen);
+            } else {
+                zipPrevEncodeLength(p+rawlen, rawlen);
+            }
+
+            break;
+        }
+    }
+
+    // 迭代到最后一个节点 myerr
+    // while (p[0] != ZIP_END) {
+
+    //     unsigned int prevlensize, prevlen, encoding, lensize, len;
+    //     // 当前节点信息
+    //     ZIP_DECODE_PREVLEN(p, prevlensize, prevlen);
+    //     ZIP_DECODE_LENGTH(p + prevlensize, encoding, lensize, len);
+
+    //     // 下一个节点是否存在
+    //     np = p + zipRawEntryLength(p);
+    //     if (np[0] == ZIP_END) break;
+
+    //     // 获取下一个节点
+    //     next = zipEntry(np);
+
+    //     // 当前节点的长度与后置节点记录的长度相同, 退出
+    //     if (prevlen == next.prevrawlen)
+    //         break;
+
+    //     // 计算两节点的 prevlen 差值
+    //     nextdiff = prevlensize - next.prevrawlensize;
+
+    //     // nextdiff > 0, 需要扩容
+    //     if (nextdiff > 0) {
+
+    //         // 
+    //         np -= nextdiff;
+
+    //         // 扩容
+    //         offset = np - zl;
+    //         zl = ziplistResize(zl, curlen+nextdiff);
+    //         np = zl + offset;
+
+    //         // 移动数据
+    //         memmove(np,np+nextdiff,curlen-offset-1+nextdiff);
+    //         // 前置节点长度写入到后置节点
+    //         // 如果不是尾节点, 更新尾节点偏移量
+            
+
+    //         // 移动 p 指针到下一个节点
+    //         // 总长度更新
+    //         p = np;
+    //         curlen += nextdiff;
+
+    //     // nextdiff <= 0, 只修改前置长度, 然后退出
+    //     } else {
+
+    //         // < 0
+    //         if (nextdiff < 0) {
+
+    //             // 将一个小于 5 字节的长度写入 5 字节的空间中
+    //         // == 0
+    //         } else {
+    //             // 修改前置节点长度
+    //             zipPrevEncodeLength(np, prevlen);
+    //         }
+    //     }
+    // }
+
+    return zl;
+}
+
 // 在 p 指向的节点前添加新节点
 static unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned char *s, unsigned int slen) {
 
@@ -371,8 +504,10 @@ static unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsig
     }
 
     // 连锁更新
-    if (nextdiff) {
-        // zl = __zipCa
+    if (nextdiff != 0) {
+        offset = p -zl;
+        zl = __ziplistCascadeUpdate(zl, p);
+        p = zl + offset;
     }
 
     // 写入前置节点长度
