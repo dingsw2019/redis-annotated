@@ -66,6 +66,7 @@ typedef struct zlentry {
 #define ZIPLIST_LENGTH(zl) (*((uint16_t*)((zl)+sizeof(uint32_t)*2)))
 // 列表头部字节数
 // #define ZIPLIST_HEADER_SIZE ((uint32_t)*2+(uint16_t)) myerr
+// #define ZIPLIST_HEADER_SIZE (sizeof(uint32_t)*2+sizeof(uint16_t))
 #define ZIPLIST_HEADER_SIZE (sizeof(uint32_t)*2+sizeof(uint16_t))
 // 第一个节点
 #define ZIPLIST_ENTRY_HEAD(zl) ((zl)+ZIPLIST_HEADER_SIZE)
