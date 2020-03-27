@@ -562,7 +562,7 @@ static unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p
         if (next.prevrawlen == rawlen) break;
 
         // 触发更新
-        if (next.prevrawlensize < rawlen) {
+        if (next.prevrawlensize < rawlensize) {
             
             offset = p - zl;
 
@@ -587,7 +587,7 @@ static unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p
             memmove(np+rawlensize, np+next.prevrawlensize, curlen-noffset-1-next.prevrawlensize);
 
             // 写入前置节点长度
-            zipPrevEncodeLength(np,rawlensize);
+            zipPrevEncodeLength(np,rawlen);
 
             // 处理下一个节点
             p += rawlen;
