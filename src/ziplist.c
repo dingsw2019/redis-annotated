@@ -493,7 +493,7 @@ static int64_t zipLoadInteger(unsigned char *p, unsigned char encoding) {
         memrev64ifbe(&i64);
         ret = i64;
     } else if (encoding >= ZIP_INT_IMM_MIN && encoding <= ZIP_INT_IMM_MAX) {
-        ret = (encoding & ZIP_INT_IMM_MASK) - 1;
+        ret = (encoding & ZIP_INT_IMM_MASK) - 1;// 减1 是因为ZIP_INT_IMM_MIN值为1
     } else {
         // assert(NULL); 
     }
