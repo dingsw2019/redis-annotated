@@ -942,7 +942,7 @@ unsigned char *ziplistIndex(unsigned char *zl, int index) {
 /**
  * 返回 p 所指向节点的后置节点
  * 
- * 如果 p 是末端标识符或者表尾节点, 那么返回 NULL
+ * 如果 p 是末端标识符, 那么返回 NULL
  *
  * T = O(1)
  */
@@ -1151,7 +1151,7 @@ unsigned char *ziplistFind(unsigned char *p, unsigned char *vstr, unsigned int v
 
                 // 值相同,返回
                 if (vencoding != UCHAR_MAX) {
-                    long long ll = zipLoadInteger(p, vencoding);
+                    long long ll = zipLoadInteger(q, encoding);
                     if (vll == ll) {
                         return p;
                     }

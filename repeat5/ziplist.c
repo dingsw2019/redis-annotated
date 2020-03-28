@@ -543,13 +543,12 @@ static unsigned char *__ziplistDelete(unsigned char *zl, unsigned char *p, unsig
 // 创建并返回一个空列表
 unsigned char *ziplistNew(void) {
 
-    unsigned int len = ZIPLIST_HEADER_SIZE+1;
-    // 申请内存
+    size_t len = ZIPLIST_HEADER_SIZE+1;
+    // 申请内存空间
     unsigned char *zl = zmalloc(len);
-
     // 初始化属性
-    ZIPLIST_BYTES(zl) = len;
-    ZIPLIST_TAIL_OFFSET(zl) = ZIPLIST_HEADER_SIZE;
+    ZIPLIST_BYTES(zl) = intrev32ifbe(len);
+    ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(ZIPLIST_HEADER_SIZE);
     ZIPLIST_LENGTH(zl) = 0;
 
     zl[len-1] = ZIP_END;
@@ -557,88 +556,128 @@ unsigned char *ziplistNew(void) {
     return zl;
 }
 
-// 向两端添加节点, 成功返回列表地址, 否则返回 NULL
+// 从两端添加节点
 unsigned char *ziplistPush(unsigned char *zl, unsigned char *s, unsigned int slen, int where) {
 
     unsigned char *p;
-
-    // 通过 where 确定节点
+    // 添加方向确定节点
     p = (where == ZIPLIST_HEAD) ? ZIPLIST_ENTRY_HEAD(zl) : ZIPLIST_ENTRY_TAIL(zl);
 
-    // 添加节点
-    return __ziplistInsert(zl,p,s,slen);
+    return __ziplistInsert(zl, p, s, slen);
 }
 
-// 返回索引指向的节点
-// 负索引, 从尾向头遍历, 从 -1 开始
-// 正索引, 从头向尾遍历, 从 0 开始
+// 返回指定索引的节点地址
+// 负索引, 从尾到头迭代, 从 -1 开始
+// 正索引, 从头到尾迭代, 从 0 开始
+// 索引超范围或者列表为空, 返回NULL
 unsigned char *ziplistIndex(unsigned char *zl, int index) {
 
     unsigned char *p;
     zlentry entry;
 
+    // 负索引
     if (index < 0) {
-        index = (-index) -1;
+
+        // 计算距离
+        index = (-index) - 1;
+        // 起始节点
         p = ZIPLIST_ENTRY_TAIL(zl);
 
+        // 从后向前迭代
         if (p[0] != ZIP_END) {
 
             entry = zipEntry(p);
-            while (entry.prevrawlen>0 && index--) {
+            while (entry.prevrawlen > 0 && index--) {
                 p -= entry.prevrawlen;
                 entry = zipEntry(p);
             }
         }
+
+    // 正索引
     } else {
 
+        // 起始节点
         p = ZIPLIST_ENTRY_HEAD(zl);
-        while (p[0] != ZIP_END && index--) {
+        // 从前向后迭代
+        while(p[0] != ZIP_END && index--) {
             p += zipRawEntryLength(p);
         }
     }
 
-    // return p; myerr
     return (p[0] == ZIP_END || index > 0) ? NULL : p;
 }
 
-unsigned int ziplistGet(unsigned char *p, unsigned char **sstr, unsigned int *slen, long long *sval) {
+// 返回 p 的后置节点, 到表尾节点或末端标识符返回 NULL
+unsigned char *ziplistNext(unsigned char *zl, unsigned char *p) {
+    ((void) zl);
+    // p 不是尾节点
+    if (p[0] == ZIP_END)
+        return NULL;
+
+    // 移动到下一个节点
+    p += zipRawEntryLength(p);
+
+    // p 不是尾节点
+    if (p[0] == ZIP_END)
+        return NULL;
+
+    // 返回
+    return p;
+}
+
+// 返回 p 的前置节点, 如果是末端表示符, 移动到尾节点开始迭代
+unsigned char *ziplistPrev(unsigned char *zl, unsigned char *p) {
 
     zlentry entry;
-    // p 为空 , 或者指向末端终结符
-    // 无法提取节点, 返回
-    if (p == NULL || p[0] == ZIP_END) return 0;
-    
-    // 清空 sstr 
-    if (sstr) *sstr = NULL;
+    if (p == ZIPLIST_ENTRY_HEAD(zl)) {
+        return NULL;
+    } else if(p[0] == ZIP_END) {
+        p = ZIPLIST_ENTRY_TAIL(zl);
+        return (p[0] == ZIP_END) ? NULL : p;
+    } else {
+        entry = zipEntry(p);
+        assert(entry.prevrawlen > 0);
+        return p - entry.prevrawlen;
+    }
+}
 
-    // 获取节点信息
-    entry = zipEntry(p);
+// 将 p 指向节点的值填入指针中, 提取成功返回 1, 否则返回 0
+// 如果是值是字符串, 填入sstr和slen
+// 如果是整数, 填入 sval
+unsigned int ziplistGet(unsigned char *p, unsigned char **sstr, unsigned int *slen, long long *sval) {
 
-    // 字符串类型
+    // 有效值判断
+    if (p==NULL || p[0]==ZIP_END)
+        return 0;
+    if (*sstr) *sstr = NULL;
+
+    // 获取 p 的节点
+    zlentry entry = zipEntry(p);
+
+    // 字符串
     if (ZIP_IS_STR(entry.encoding)) {
-
-        // 保存字符串内容和长度
         if (sstr) {
             *sstr = p+entry.headersize;
             *slen = entry.len;
         }
-    // 整数类型
+    // 整数
     } else {
-
-        // 保存整数值
         if (sval) {
-            *sval = zipLoadInteger(p+entry.headersize, entry.encoding); 
+            *sval = zipLoadInteger(p+entry.headersize, entry.encoding);
         }
     }
 
     return 1;
 }
 
-// 删除节点 myerr:缺少
+// 从列表中删除 *p 指向节点, 返回列表首地址
+// 更新 *p 位置
 unsigned char *ziplistDelete(unsigned char *zl, unsigned char **p) {
 
-    // 删除节点
+    // 记住偏移量
     size_t offset = *p - zl;
+
+    // 删除节点
     zl = __ziplistDelete(zl, *p, 1);
 
     // 更新 p 的位置
@@ -647,15 +686,142 @@ unsigned char *ziplistDelete(unsigned char *zl, unsigned char **p) {
     return zl;
 }
 
-// 从指定索引的节点处开始, 连续删除 num 个节点
+// 从指定索引的节点开始, 连续删除 num 个节点, 返回删除后的列表首地址
 unsigned char *ziplistDeleteRange(unsigned char *zl, unsigned int index, unsigned int num) {
 
-    // 获取 index 指向的节点
+    // 获取索引指向的节点
     unsigned char *p = ziplistIndex(zl, index);
 
-    // 删除节点
-    // return __ziplistDelete(zl, p, num); myerr
-    return (p==NULL) ? zl : __ziplistDelete(zl, p, num);
+    // 执行删除
+    return (p == NULL) ? zl : __ziplistDelete(zl, p, num);
+}
+
+// 将 p 指向节点值与 sstr 比对
+// 相同返回 1, 否则返回 0
+unsigned int ziplistCompare(unsigned char *p, unsigned char *sstr, unsigned int slen) {
+
+    if (p[0] == ZIP_END) return 0;
+
+    // 获取节点信息
+    zlentry entry = zipEntry(p);
+
+    // 字符串
+    if (ZIP_IS_STR(entry.encoding)) {
+
+        // 比对长度
+        if (entry.len == slen) {
+            // 比对内容
+            return memcpy(p+entry.headersize, sstr, slen) == 0;
+        } else {
+            return 0;
+        }
+    // 数值
+    } else {
+        long long sval,zval;
+        unsigned char sencoding;
+        // 将 sstr 转换成整数
+        if (zipTryEncoding(sstr,slen, &sval, &sencoding)) {
+
+            // 获取 p 的节点值
+            // zval = zipLoadInteger(p, entry.encoding); myerr
+            zval = zipLoadInteger(p+entry.headersize, entry.encoding);
+            // 比对值
+            return zval == sval;
+        }
+    }
+
+    // 不相同
+    return 0;
+}
+
+// 从 p 节点开始, 每次跳过 skip 个节点, 然后比对节点值
+// 节点值相同返回
+unsigned char *ziplistFind(unsigned char *p, unsigned char *vstr, unsigned int vlen, unsigned int skip) {
+
+    unsigned int skipcnt = 0;
+    unsigned char vencoding = 0;
+    long long vll;
+
+    // 查找节点
+    while (p[0] != ZIP_END) {
+        unsigned int prevlensize, encoding, lensize, len;
+        unsigned char *q;
+        // 获取节点的前置节点长度
+        ZIP_DECODE_PREVLENSIZE(p, prevlensize);
+        // 获取节点编码和长度
+        ZIP_DECODE_LENGTH(p+prevlensize, encoding, lensize, len);
+
+        q = p + prevlensize + lensize;
+
+        if (skipcnt == 0) {
+
+
+            // 字符串
+            if (ZIP_IS_STR(encoding)) {
+
+                // 比对字符串
+                if (len = vlen && memcmp(q, vstr, len) == 0)
+                    return p; 
+            // 整数
+            } else {
+
+                // 获取 vstr 的整数值
+                if (vencoding == 0) {
+
+                    if (!zipTryEncoding(vstr,vlen, &vll, &vencoding)) {
+                        vencoding = UCHAR_MAX;
+                    }
+                }
+
+                if (vencoding != UCHAR_MAX) {
+
+                    // 获取节点的整数值
+                    long long ll = zipLoadInteger(q, encoding);
+                    // 比对
+                    if (ll == vll) {
+                        return p;
+                    }
+                }
+            }
+
+            // 重置跳跃节点数
+            skipcnt = skip;
+        } else {
+
+            // 跳过节点
+            skipcnt--;
+        }
+
+        p = q + len;
+
+    }
+
+    return NULL;
+}
+
+// 返回压缩列表的节点数量
+unsigned int ziplistLen(unsigned char *zl) {
+
+    // 节点数量大于 16位整数最大值 时, 要迭代计算节点数
+    unsigned int size = 0;
+    if (intrev32ifbe(ZIPLIST_LENGTH(zl)) < UINT16_MAX) {
+        size = intrev32ifbe(ZIPLIST_LENGTH(zl));
+    } else {
+        unsigned char *p = zl + ZIPLIST_HEADER_SIZE;
+        while(*p != ZIP_END) {
+            p += zipRawEntryLength(p);
+            size++;
+        }
+
+        if (size < UINT16_MAX) ZIPLIST_LENGTH(zl) = intrev32ifbe(size);
+    }
+
+    return size;
+}
+
+// 列表总字节数
+size_t ziplistBlobLen(unsigned char *zl) {
+    return intrev32ifbe(ZIPLIST_BYTES(zl));
 }
 
 
