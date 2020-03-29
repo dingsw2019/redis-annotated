@@ -1,16 +1,22 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "zmalloc.h"
 #include "adlist.h"
 
-// 创建并返回一个空链表
-list *listCreate(void)
-{
-    // 申请内存空间
-    // list *li = zmalloc(sizeof(*li));
+
+/*----------------- API -----------------*/
+
+// 创建并返回一个空列表
+list *listCreate(void) {
+
     list *li;
-    if ((li = zmalloc(sizeof(*li))) == NULL)
+    // 申请内存 
+    if((li = zmalloc(sizeof(*li))) == NULL)
         return NULL;
     // 初始化属性
-    li->len = 0;
     li->head = li->tail = NULL;
+    li->len = 0;
     li->dup = NULL;
     li->free = NULL;
     li->match = NULL;
@@ -19,120 +25,78 @@ list *listCreate(void)
 }
 
 // 头部添加节点
-list *listAddNodeHead(list *list,void *value)
-{   
-    // 申请节点内存
-    // listNode *node = zmalloc(sizeof(*node));
+list *listAddNodeHead(list *list, void *value) {
+
+    // 创建一个新节点
     listNode *node;
-    if ((node = zmalloc(sizeof(*node))) == NULL)
+    if ((node = zmalloc(sizeof(*node))) == NULL) 
         return NULL;
     node->value = value;
 
-    // 空添加
+    // 空链表添加
     if (list->len == 0) {
-        list->head = list->tail = node;
         node->prev = node->next = NULL;
-    } 
-    // 非空添加
-    else {
+        list->head = list->tail = node;
+    // 非空链表添加
+    } else {
         node->prev = NULL;
         node->next = list->head;
         list->head->prev = node;
         list->head = node;
     }
 
-    // 更新节点数
+    // 更新节点计数器
     list->len++;
 
     return list;
 }
 
 // 尾部添加节点
-list *listAddNodeTail(list *list, void *value)
-{
-    // 申请内存空间
-    listNode *node;
+list *listAddNodeTail(list *list, void *value) {
 
+    listNode *node;
+    // 创建新节点
     if ((node = zmalloc(sizeof(*node))) == NULL)
         return NULL;
     node->value = value;
 
-    // 空添加
+    // 空链表添加
     if (list->len == 0) {
         node->prev = node->next = NULL;
         list->head = list->tail = node;
-    }
-    // 非空添加
-    else {
+
+    // 非空链表添加
+    } else {
         node->prev = list->tail;
         node->next = NULL;
         list->tail->next = node;
         list->tail = node;
     }
 
-    // 更新节点数
-    list->len++;
-
-    return list;
-}
-
-// 指定节点前后添加节点
-// after=0, 之前添加
-// after=1, 之后添加
-list *listInsertNode(list *list,listNode *old_node,void *value,int after)
-{
-    // 申请内存空间
-    listNode *node;
-
-    if((node = zmalloc(sizeof(*node))) == NULL)
-        return NULL;
-    node->value = value;
-
-    // 之后添加
-    if (after) {
-        node->prev = old_node;
-        node->next = old_node->next;
-        // if (list->head == old_node) myerr 向前是头
-        //     list->head = node;
-        if (list->tail == old_node)
-            list->tail = node;
-    } else {
-        node->prev = old_node->prev;
-        node->next = old_node;
-        // if (list->tail == old_node)
-        //     list->tail = node;
-        if (list->head == old_node) //myerr 向前是头
-            list->head = node;
-    }
-
-    // 新节点左右节点的链接
-    if (node->prev != NULL) {
-        node->prev->next = node;
-    }
-
-    if (node->next != NULL) {
-        node->next->prev = node;
-    }
-
+    // 更新节点计数器
     list->len++;
 
     return list;
 }
 
 // 释放链表
-void listRelease(list *list)
-{
+void listRelease(list *list) {
+
     unsigned long len = list->len;
-    listNode *current,*next;
+    listNode *current, *next;
 
     current = list->head;
+
+    // 释放节点
     while (len--) {
         next = current->next;
-        // 释放节点值
-        if (list->free)
+
+        if (list->free) {
             list->free(current->value);
-        // 释放节点
+        } 
+
         zfree(current);
+
         current = next;
     }
 
@@ -140,28 +104,63 @@ void listRelease(list *list)
     zfree(list);
 }
 
-// 根据 value 搜索节点
-listNode *listSearchKey(list *list, void *val)
-{
-    listIter *iter;
-    listNode *node;
+// 获取迭代器
+listIter *listGetIterator(list *list, int direction) {
 
-    if ((iter = listGetIterator(list,AL_START_HEAD)) == NULL)
-        return NULL;
-    
+    // 申请内存空间
+    listIter *iter = zmalloc(sizeof(*iter));
+    if (iter == NULL) return NULL;
+
+    // 起始节点
+    if (direction == AD_START_HEAD) {
+        iter->next = list->head;
+    } else {
+        iter->next = list->tail;
+    }
+
+    // 方向
+    iter->direction = direction;
+
+    return iter;
+}
+
+// 获取下一个节点
+listNode *listNext(listIter *iter) {
+
+    listNode *current = iter->next;
+
+    if (current != NULL) {
+
+        if (iter->direction == AD_START_HEAD) {
+            iter->next = current->next;
+        } else {
+            iter->next = current->prev;
+        }
+    }
+
+    return current;
+}
+
+// 释放迭代器
+void listReleaseIterator(listIter *iter) {
+    zfree(iter);
+}
+
+// 匹配相同节点值
+listNode *listSearchKey(list *list, void *key) {
+
+    listNode *node;
+    listIter *iter = listGetIterator(list,AD_START_HEAD);
+
     while((node = listNext(iter)) != NULL) {
-        // myerr
-        // if (list->match(node->value,val)) {
-        //     listReleaseIterator(iter);
-        //     return node;
-        // }
+
         if (list->match) {
-            if (list->match(node->value,val)) {
+            if (list->match(node->value, key)) {
                 listReleaseIterator(iter);
                 return node;
             }
         } else {
-            if (node->value == val) {
+            if (node->value == key) {
                 listReleaseIterator(iter);
                 return node;
             }
@@ -172,177 +171,170 @@ listNode *listSearchKey(list *list, void *val)
     return NULL;
 }
 
-// 按索引查找节点
-// 负索引是从后向前找
-listNode *listIndex(list *list,long index)
-{
+// 指定节点两端添加新节点
+// after=0, 在之后添加
+// after=1, 在之前添加
+list *listInsertNode(list *list, listNode *old_node, void *value, int after) {
+
+    listNode *node;
+
+    // 创建新节点
+    if ((node = zmalloc(sizeof(*node))) == NULL)
+        return NULL;
+    node->value = value;
+
+    // 处理新节点的指针指向
+    if (after) {
+        node->prev = old_node;
+        node->next = old_node->next;
+        // 尾节点
+        if (list->tail == old_node)
+            list->tail = node;
+    } else {
+        node->prev = old_node->prev;
+        node->next = old_node;
+        // 头节点
+        if (list->head == old_node) 
+            list->head = node;
+    }
+
+    // 处理新节点相邻节点的指针指向
+    if (node->prev != NULL) {
+        node->prev->next = node;
+    }
+
+    if (node->next != NULL) {
+        node->next->prev = node;
+    }
+
+    // 更新节点计数器
+    list->len++;
+
+    return list;
+}
+
+// 删除节点
+void listDelNode(list *list, listNode *node) {
+
+    // 调整前置节点指针
+    if (node->prev) {
+        node->prev->next = node->next;
+    } else {
+        list->head = node->next;
+    }
+
+    // 调整后置节点指针
+    if (node->next) {
+        node->next->prev = node->prev;
+    } else {
+        list->tail = node->prev;
+    }
+
+    // 释放节点
+    if (list->free) list->free(node->value);
+    zfree(node);
+
+    // 更新节点数
+    list->len--;
+
+}
+
+// 通过索引值获取节点
+listNode *listIndex(list *list, int index) {
+
     listNode *n;
-    // 负索引转正索引
+    // 负索引
     if (index < 0) {
-        // index = -index; myerr
         index = (-index)-1;
         n = list->tail;
-        while(n && index--) n = n->prev;
+        while(index-- && n) n = n->prev;
+    // 正索引
     } else {
         n = list->head;
-        while(index--) n = n->next;
+        while(index-- && n) n = n->next;
     }
 
     return n;
 }
 
-// 删除节点
-void listDelNode(list *list,listNode *node)
-{
-    if (list->tail == node){
-        // node->prev->next = NULL; myerr 可删
-        list->tail = node->prev;
-    } else {
-        node->next->prev = node->prev;
-    }
+// 将表尾节点放到表头
+list *listRotate(list *list) {
 
-    if (list->head == node) {
-        // node->next->prev = NULL; myerr 可删
-        list->head = node->next;
-    } else {
-        node->prev->next = node->next;
-    }
-
-    // myerr 缺少
-    if (list->free) list->free(node->value);
-    zfree(node);
-
-    list->len--;
-}
-
-// 表尾节点移动到表头
-void listRotate(list *list)
-{
     listNode *tail = list->tail;
-    // 表尾
-    tail->prev->next = NULL;
+
+    // 处理尾节点
     list->tail = tail->prev;
+    list->tail->next = NULL;
 
-    // 表头
+    // 处理头节点
     list->head->prev = tail;
-    tail->next = list->head;
     tail->prev = NULL;
-
+    tail->next = list->head;
     list->head = tail;
+
+    return list;
 }
 
-// 迭代器方向,从表尾开始
-void listRewindTail(list *list, listIter *iter)
-{
+void listRewindTail(list *list, listIter *iter) {
+    iter->direction = AD_START_TAIL;
     iter->next = list->tail;
-    iter->direction = AL_START_TAIL;
 }
 
-// 拷贝链表
-list *listDup(list *orig)
-{
+// 复制链表
+list *listDup(list *orig) {
+
     list *copy;
     listNode *node;
-    listIter *iter;
+    listIter *iter = listGetIterator(orig, AD_START_HEAD);
 
+    // 创建一个空链表
     if ((copy = listCreate()) == NULL)
         return NULL;
 
-    // 设置节点值处理函数 myerr 缺少
     copy->dup = orig->dup;
     copy->free = orig->free;
     copy->match = orig->match;
 
-    if ((iter = listGetIterator(orig,AL_START_HEAD)) == NULL)
-        return NULL;
+    // 遍历添加节点
+    while((node = listNext(iter)) != NULL) {
 
-    // 遍历节点
-    while ((node = listNext(iter)) != NULL) {
-        void *val;
-        // 复制值
-        // if (orig->dup) { myerr
+        void *value;
         if (copy->dup) {
-
-            // val = orig->dup(node->value); myerr
-            val = copy->dup(node->value);
-            if (val == NULL) {
+            value = copy->dup(node->value);
+            if (value == NULL) {
                 listReleaseIterator(iter);
                 listRelease(copy);
                 return NULL;
             }
+        } else {
+            value = node->value;
         }
-        else 
-            val = node->value;
-
-        // 添加节点到新表
-        if(listAddNodeTail(copy,val) == NULL) {
+        if (!listAddNodeTail(copy,value)) {
             listReleaseIterator(iter);
             listRelease(copy);
             return NULL;
         }
     }
-
     listReleaseIterator(iter);
+
     return copy;
 }
 
-// 获取迭代器
-listIter *listGetIterator(list *list,int direction)
-{
-    // listIter *iter = zmalloc(sizeof(*iter));
-    listIter *iter;
-    if((iter = zmalloc(sizeof(*iter))) == NULL)
-        return NULL;
-
-    if (direction == AL_START_HEAD)
-        iter->next = list->head;
-    else 
-        iter->next = list->tail;
-    iter->direction = direction;
-
-    return iter;
-}
-
-// 执行迭代器
-listNode *listNext(listIter *iter)
-{
-    listNode *current = iter->next;
-
-    if (current != NULL) {
-
-        if (iter->direction == AL_START_HEAD)
-            iter->next = current->next;
-        else
-            iter->next = current->prev;
-    }
-
-    return current;
-}
-
-// 释放迭代器
-void listReleaseIterator(listIter *iter)
-{
-    zfree(iter);
-}
-
 /*----------------- debug -----------------*/
-void printList(list *list)
-{
-    listIter *iter = listGetIterator(list,AL_START_HEAD);
+int keyMatch(void *p1, void *p2) {
+    return (strcmp(p1,p2) == 0) ? 1 : 0;
+}
+
+void printList(list *li) {
+
     listNode *node;
-    printf("list size is %d, elements: ",listLength(list));
+    listIter *iter = listGetIterator(li,AD_START_HEAD);
     while ((node = listNext(iter)) != NULL) {
-        printf("%s ",(char*)node->value);
+        printf("%s ", (char*)node->value);
     }
     printf("\n");
-
-    listReleaseIterator(iter);
 }
 
-int keyMatch(void *v1,void *v2)
-{
-    return (strcmp(v1,v2) == 0) ? 1 : 0;
-}
 
 //gcc -g zmalloc.c adlist.c
 int main(void){

@@ -1,64 +1,63 @@
 #ifndef AD_LIST_H
 #define AD_LIST_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "zmalloc.h"
+// 节点
+typedef struct listNode {
 
-// 双端链表节点
-typedef struct listNode 
-{
+    // 前置节点
     struct listNode *prev;
+    // 后置节点
     struct listNode *next;
+    // 节点值
     void *value;
 } listNode;
 
-// 双端链表
-typedef struct list 
-{
+// 链表
+typedef struct list {
+    // 头节点
     listNode *head;
+    // 尾节点
     listNode *tail;
-    void *(*dup)(void *val);
-    void (*free)(void *val);
-    // void (*match)(void *v1,void *v2);
-    int (*match)(void *v1,void *v2);
-
-    unsigned long len;// myerr 缺少
+    // 复制
+    void *(*dup)(void *p);
+    // 释放
+    void (*free)(void *p);
+    // 比对
+    int (*match)(void *p1, void *p2);
+    // 节点计数器
+    unsigned long len;
 } list;
 
 // 迭代器
-typedef struct listIter
-{
-    listNode *next;
+typedef struct listIter {
+    // 方向
     int direction;
+    // 节点
+    listNode *next;
 } listIter;
 
-// 链表长度
-// #define listLength(l) (l)->len myerr
+#define AD_START_HEAD 0
+#define AD_START_TAIL 1
+
+// 节点数
 #define listLength(l) ((l)->len)
 
-// 设置链表对比函数
-// #define listSetMatch(l,m) (l)->match = (m) myerr
+// 设置比对函数
 #define listSetMatchMethod(l,m) ((l)->match = (m))
-
-// 迭代方向
-#define AL_START_HEAD 0
-#define AL_START_TAIL 1
 
 list *listCreate(void);
 list *listAddNodeHead(list *list,void *value);
 list *listAddNodeTail(list *list, void *value);
-list *listInsertNode(list *list,listNode *old_node,void *value,int after);
-void listRelease(list *list);
-listNode *listSearchKey(list *list, void *val);
-listNode *listIndex(list *list,long index);
-void listDelNode(list *list,listNode *node);
-void listRotate(list *list);
-void listRewindTail(list *list, listIter *iter);
-list *listDup(list *orig);
-listIter *listGetIterator(list *list,int direction);
-listNode *listNext(listIter *iter);
-void listReleaseIterator(listIter *iter);
+// list *listInsertNode(list *list,listNode *old_node,void *value,int after);
+// void listRelease(list *list);
+// listNode *listSearchKey(list *list, void *val);
+// listNode *listIndex(list *list,long index);
+// void listDelNode(list *list,listNode *node);
+// void listRotate(list *list);
+// void listRewindTail(list *list, listIter *iter);
+// list *listDup(list *orig);
+// listIter *listGetIterator(list *list,int direction);
+// listNode *listNext(listIter *iter);
+// void listReleaseIterator(listIter *iter);
 
 #endif
