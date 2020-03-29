@@ -8,178 +8,205 @@
 #include "testhelp.h"
 #include "limits.h"
 
-// 创建 sds 字符串
-sds sdsnewlen(const void *init,size_t initLen){
+// 创建一个 sds 字符串
+sds sdsnewlen(const char *init, size_t initlen) {
 
-    // 申请 sdshdr 内存
     struct sdshdr *sh;
-
+    // 申请 sdshdr 内存空间
     if (init) {
-        sh = zmalloc(sizeof(struct sdshdr)+1+initLen);
+        sh = zmalloc(initlen+1+sizeof(struct sdshdr));
     } else {
-        sh = zcalloc(sizeof(struct sdshdr)+1+initLen);
+        sh = zcalloc(initlen+1+sizeof(struct sdshdr));
     }
 
-    // 初始化属性
-    sh->len = initLen;
-    sh->free = 0;
+    // 拷贝字符串
+    if (init && initlen)
+        memcpy(sh->buf, init, initlen);
 
-    // 赋值
-    if (init && initLen)
-        memcpy(sh->buf,init,initLen);
-    
     // 添加终结符
-    sh->buf[initLen] = '\0';
+    sh->buf[initlen] = '\0';
 
-    // 返回字符串
+    // 设置属性
+    sh->free = 0;
+    sh->len = initlen;
+
     return (char*)sh->buf;
 }
 
-sds sdsnew(const char *s){
+// 创建并返回一个空的 sds 字符串
+sds sdsempty(void) {
+    return sdsnewlen("",0);
+}
+
+// 创建一个 sds 字符串
+sds sdsnew(const char *init) {
+    size_t initlen = (init == NULL) ? 0 : strlen(init);
+    return sdsnewlen(init,initlen);
+}
+
+// 拷贝一个 sds 字符串
+sds sdsdup(sds s) {
     return sdsnewlen(s,strlen(s));
 }
 
-void sdsfree(sds s){
-    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
-    zfree(sh);
+// 释放 sds
+void sdsfree(sds s) {
+    if (s == NULL) return ;
+    // 获取 sds 的首地址, 释放
+    zfree(s-sizeof(struct sdshdr));
 }
 
-sds sdsMakeRoomFor(sds s,size_t addlen){
-    struct sdshdr *newsh,*sh;
-    size_t newlen,len;
+// sds 空间扩容
+sds sdsMakeRoomFor(sds s, size_t addlen) {
 
-    sh = (void*)(s-(sizeof(struct sdshdr)));
-    if (sh->free > addlen) return s;
+    size_t totlen, len;
+    // 获取 s 的空闲长度
+    struct sdshdr *newsh, *sh = (void*)(s-sizeof(struct sdshdr));
 
+    // 如果空闲长度大于等于 addlen, 无需扩容, 直接返回
+    if (sh->free >= addlen) return s;
+
+    // 计算总的字符串长度
     len = sh->len;
-    newlen = sh->len+addlen;
-    if (newlen < SDS_MAX_PREALLOC)
-        newlen *= 2;
-    else
-        newlen += SDS_MAX_PREALLOC;
+    totlen = len + addlen;
 
-    newsh = zrealloc(sh,sizeof(struct sdshdr)+newlen+1);
+    // 扩容策略, 计算扩容后的总字符串长度, 1M下2倍扩容, 1M上1M扩容
+    if (totlen > SDS_MAX_PREALLOC) {
+        totlen += SDS_MAX_PREALLOC;
+    } else {
+        totlen *= 2;
+    }
+
+    // 重分配内存空间
+    newsh = zrealloc(sh, totlen+1+sizeof(struct sdshdr));
     if (newsh == NULL) return NULL;
 
-    newsh->free = newlen - len;
+    // 设置属性
+    newsh->free = totlen - len;
 
     return newsh->buf;
 }
 
-sds sdscatlen(sds s,const char *t,size_t len){
+// 将字符串 s 拷贝到 sds, 会覆盖原内容
+sds sdscpylen(sds s, const char *t, size_t len) {
 
-    struct sdshdr *sh;
-    
-    size_t curlen = sdslen(s);
+    // 获取 s 的字符串的全部可用空间
+    struct sdshdr *sh = (void*)(s-sizeof(struct sdshdr));
+    size_t totlen = sh->len + sh->free;
 
-    // 扩展内存
-    s = sdsMakeRoomFor(s,len);
-    if (s == NULL) return NULL;
+    // 计算是否需要扩容 s
+    if (totlen < len) {
+        s = sdsMakeRoomFor(s, len-totlen);
+        if (s == NULL) return NULL;
+        sh = (void*)(s-sizeof(struct sdshdr));
+        totlen = sh->len + sh->free;
+    }
 
-    sh = (void*)(s-(sizeof(struct sdshdr)));
-    memcpy(s+curlen,t,len);
+    // 拷贝字符串
+    memcpy(s, t, len);
 
     // 添加终结符
-    s[curlen+len] = '\0';
+    s[len] = '\0';
 
-    // 调整属性
-    sh->len = curlen+len;
-    sh->free = sh->free-len;
+    // 设置属性
+    sh->free = (totlen - len);
+    sh->len = len;
 
     return s;
 }
 
-sds sdscatsds(sds s, const sds t){
+sds sdscpy(sds s, const char *t) {
+    return sdscpylen(s, t, strlen(t));
+}
+
+// sds 后追加字符串
+sds sdscatlen(sds s, const char *t, size_t len) {
+
+    struct sdshdr *sh;
+    // 当前字符串长度
+    size_t curlen = sdslen(s);
+
+    // 扩容
+    s = sdsMakeRoomFor(s, len);
+    if (s == NULL) return NULL;
+
+    sh = (void*)(s-sizeof(struct sdshdr));
+    // 追加字符串
+    memcpy(s+curlen, t, len);
+
+    // 设置终结符
+    s[curlen+len] = '\0';
+
+    // 设置属性
+    sh->free -= len;
+    sh->len = curlen + len;
+
+    return s;
+}
+
+sds sdscat(sds s, const char *t) {
     return sdscatlen(s, t, strlen(t));
 }
 
-sds sdscat(sds s,const char *t){
-    return sdscatlen(s,t,strlen(t));
+sds sdscatsds(sds s, const sds t) {
+    return sdscatlen(s, t, strlen(t));
 }
 
-sds sdscpylen(sds s,const char *t,size_t len){
+// 两端去除指定字符
+sds sdstrim(sds s, const char *cset) {
 
-    struct sdshdr *sh;
-    sh = (void*)(s-(sizeof(struct sdshdr)));
-    size_t totlen;
-    totlen = sh->len+sh->free;
-    // 是否需要扩容
-    if (totlen < len){
-        s = sdsMakeRoomFor(s,totlen-len);
-        if (s == NULL) return NULL;
-        sh = (void*)(s-(sizeof(struct sdshdr)));
-        totlen = sh->len+sh->free;
-    }
-        
-    // 复制字符串
-    memcpy(s,t,len);
+    char *start, *sp, *end, *ep;
+    size_t len;
+    struct sdshdr *sh = (void*)(s-sizeof(struct sdshdr));
+
+    start = sp = s;
+    end = ep = s+sdslen(s)-1;
+
+    // 跳过指定字符, 找到起始和结束的位置
+    while (sp <= end && strchr(cset,*sp)) sp++;
+    while (ep >= start && strchr(cset,*ep)) ep--;
+
+    // 截取后的字符串长度
+    len = (sp > ep) ? 0 : (ep-sp)+1;
+
+    // 首地址变更, 移动字符串数据
+    if (start != sp)
+        memmove(s, sp, len);
 
     // 添加终结符
     s[len] = '\0';
 
-    // 更新属性
-    sh->len = len;
-    sh->free = totlen-len;
-
-    return s;
-}
-
-sds sdscpy(sds s,const char *t){
-    return sdscpylen(s,t,strlen(t));
-}
-
-sds sdstrim(sds s,const char *cset){
-
-    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
-    char *start,*end,*sp,*ep;
-    size_t len;
-
-    sp = start = s;
-    ep = end = s+sdslen(s);
-
-    while(sp <= end && strchr(cset,*sp)) sp++;
-    while(ep >= start && strchr(cset,*ep)) ep--;
-
-    len = (sp > ep) ? 0 : (ep-sp)+1;
-
-    if (start != sp) memmove(s,sp,len);
-
-    s[len] = '\0';
-    
-    sh->free = sh->free+(sh->len-len);
+    // 设置属性
+    sh->free += sh->len - len;
     sh->len = len;
 
     return s;
 }
 
-sds sdsdup(sds s){
-    return sdsnewlen(s,strlen(s));
-}
+// 范围截取 sds 字符串
+// 支持负索引, 负索引从 -1 开始
+void sdsrange(sds s, int start, int end) {
 
-// 指定范围截取字符串
-void sdsrange(sds s,int start,int end){
-
-    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
-    size_t newlen,len = sdslen(s);
-
-    if (len == 0) return;
-    // 索引，负数转正数
+    struct sdshdr *sh = (void*)(s-sizeof(struct sdshdr));
+    size_t newlen, len = sdslen(s);
+    // 负索引转换
     if (start < 0) {
-        start = len+start;
+        start = len +start;
         if (start < 0) start = 0;
     }
     if (end < 0) {
-        end = len+end;
+        end = len+ end;
         if (end < 0) end = 0;
     }
 
     // 计算截取后的字符串长度
     newlen = (start > end) ? 0 : (end-start)+1;
 
+    // 超出范围处理
     if (newlen != 0) {
-        if (start > len) {
+        if (start >= (signed)len) {
             newlen = 0;
-        } else if (end > len) {
+        } else if (end >= (signed)len) {
             end = len-1;
             newlen = (start > end) ? 0 : (end-start)+1;
         }
@@ -187,134 +214,131 @@ void sdsrange(sds s,int start,int end){
         start = 0;
     }
 
-    // 截取字符串
-    if (start && newlen) memmove(s,s+start,newlen);
+    // 是否需要移动字符串
+    if (newlen && start) memmove(s,s+start,newlen);
 
     // 添加终结符
     s[newlen] = '\0';
 
-    // 更新属性
-    sh->free = sh->free + (sh->len-newlen);
+    // 设置属性
+    sh->free += sh->len - newlen;
     sh->len = newlen;
 }
 
-int sdscmp(sds s1,sds s2){
+// 比较两个 sds 字符串
+int sdscmp(sds s1, sds s2) {
 
+    size_t l1, l2, minLen;
     int cmp;
-    size_t l1,l2,minLen;
 
-    // 获取两个字符串的长度
-    l1 = sdslen(s1);
-    l2 = sdslen(s2);
-    // 取最小长度
-    minLen = (l1 < l2) ? l1 : l2;
+    l1 = strlen(s1);
+    l2 = strlen(s2);
+    minLen = l1 < l2 ? l1 : l2;
 
-    // 比较最小长度的部分
     cmp = memcmp(s1,s2,minLen);
-
-    // 如果最小长度部分完全相同,谁长谁大
     if (cmp == 0) return l1-l2;
 
     return cmp;
 }
 
+
 //执行: gcc -g zmalloc.c testhelp.h sds.c
 //执行: ./a.exe
-// int main(void){
+int main(void){
 
-//     // printf("x=%s\n",x);
-//     struct sdshdr *sh;
-//     sds x = sdsnew("foo"), y;
-//     test_cond("Create a string and obtain the length",
-//         sdslen(x) == 3 && memcmp(x,"foo\0",4) == 0)
+    // printf("x=%s\n",x);
+    struct sdshdr *sh;
+    sds x = sdsnew("foo"), y;
+    test_cond("Create a string and obtain the length",
+        sdslen(x) == 3 && memcmp(x,"foo\0",4) == 0)
 
-//     sdsfree(x);
-//     x = sdsnewlen("foo",2);
-//     test_cond("Create a string with specified length",
-//         sdslen(x) == 2 && memcmp(x,"fo\0",3) == 0)
+    sdsfree(x);
+    x = sdsnewlen("foo",2);
+    test_cond("Create a string with specified length",
+        sdslen(x) == 2 && memcmp(x,"fo\0",3) == 0)
 
-//     x = sdscat(x,"bar");
-//     test_cond("Strings concatenation",
-//         sdslen(x) == 5 && memcmp(x,"fobar\0",6) == 0);
+    x = sdscat(x,"bar");
+    test_cond("Strings concatenation",
+        sdslen(x) == 5 && memcmp(x,"fobar\0",6) == 0);
 
-//     x = sdscpy(x,"a");
-//     test_cond("sdscpy() against an originally longer string",
-//         sdslen(x) == 1 && memcmp(x,"a\0",2) == 0)
+    x = sdscpy(x,"a");
+    test_cond("sdscpy() against an originally longer string",
+        sdslen(x) == 1 && memcmp(x,"a\0",2) == 0)
 
-//     x = sdscpy(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk");
-//     test_cond("sdscpy() against an originally shorter string",
-//         sdslen(x) == 33 &&
-//         memcmp(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk\0",33) == 0)
+    x = sdscpy(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk");
+    test_cond("sdscpy() against an originally shorter string",
+        sdslen(x) == 33 &&
+        memcmp(x,"xyzxxxxxxxxxxyyyyyyyyyykkkkkkkkkk\0",33) == 0)
 
-//     // sdsfree(x);
-//     // x = sdscatprintf(sdsempty(),"%d",123);
-//     // test_cond("sdscatprintf() seems working in the base case",
-//     //     sdslen(x) == 3 && memcmp(x,"123\0",4) == 0)
+    // sdsfree(x);
+    // x = sdscatprintf(sdsempty(),"%d",123);
+    // test_cond("sdscatprintf() seems working in the base case",
+    //     sdslen(x) == 3 && memcmp(x,"123\0",4) == 0)
     
-//     sdsfree(x);
-//     x = sdsnew("xxciaoyyy");
-//     sdstrim(x,"xy");
-//     test_cond("sdstrim() correctly trims characters",
-//         sdslen(x) == 4 && memcmp(x,"ciao\0",5) == 0)
+    sdsfree(x);
+    x = sdsnew("xxciaoyyy");
+    sdstrim(x,"xy");
+    test_cond("sdstrim() correctly trims characters",
+        sdslen(x) == 4 && memcmp(x,"ciao\0",5) == 0)
 
-//     y = sdsdup(x);
-//     sdsrange(y,1,1);
-//     test_cond("sdsrange(...,1,1)",
-//         sdslen(y) == 1 && memcmp(y,"i\0",2) == 0)
+    y = sdsdup(x);
+    sdsrange(y,1,1);
+    test_cond("sdsrange(...,1,1)",
+        sdslen(y) == 1 && memcmp(y,"i\0",2) == 0)
 
-//     sdsfree(y);
-//     y = sdsdup(x);
-//     sdsrange(y,1,-1);
-//     test_cond("sdsrange(...,1,-1)",
-//         sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,1,-1);
+    test_cond("sdsrange(...,1,-1)",
+        sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
 
-//     sdsfree(y);
-//     y = sdsdup(x);
-//     sdsrange(y,-2,-1);
-//     test_cond("sdsrange(...,-2,-1)",
-//         sdslen(y) == 2 && memcmp(y,"ao\0",3) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,-2,-1);
+    test_cond("sdsrange(...,-2,-1)",
+        sdslen(y) == 2 && memcmp(y,"ao\0",3) == 0)
 
-//     sdsfree(y);
-//     y = sdsdup(x);
-//     sdsrange(y,2,1);
-//     test_cond("sdsrange(...,2,1)",
-//         sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,2,1);
+    test_cond("sdsrange(...,2,1)",
+        sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
 
-//     sdsfree(y);
-//     y = sdsdup(x);
-//     sdsrange(y,1,100);
-//     test_cond("sdsrange(...,1,100)",
-//         sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,1,100);
+    test_cond("sdsrange(...,1,100)",
+        sdslen(y) == 3 && memcmp(y,"iao\0",4) == 0)
 
-//     sdsfree(y);
-//     y = sdsdup(x);
-//     sdsrange(y,100,100);
-//     test_cond("sdsrange(...,100,100)",
-//         sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
+    sdsfree(y);
+    y = sdsdup(x);
+    sdsrange(y,100,100);
+    test_cond("sdsrange(...,100,100)",
+        sdslen(y) == 0 && memcmp(y,"\0",1) == 0)
 
-//     sdsfree(y);
-//     sdsfree(x);
-//     x = sdsnew("foo");
-//     y = sdsnew("foa");
-//     test_cond("sdscmp(foo,foa)", sdscmp(x,y) > 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("foo");
+    y = sdsnew("foa");
+    test_cond("sdscmp(foo,foa)", sdscmp(x,y) > 0)
 
-//     sdsfree(y);
-//     sdsfree(x);
-//     x = sdsnew("bar");
-//     y = sdsnew("bar");
-//     test_cond("sdscmp(bar,bar)", sdscmp(x,y) == 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("bar");
+    y = sdsnew("bar");
+    test_cond("sdscmp(bar,bar)", sdscmp(x,y) == 0)
 
-//     sdsfree(y);
-//     sdsfree(x);
-//     x = sdsnew("aar");
-//     y = sdsnew("bar");
-//     test_cond("sdscmp(aar,bar)", sdscmp(x,y) < 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("aar");
+    y = sdsnew("bar");
+    test_cond("sdscmp(aar,bar)", sdscmp(x,y) < 0)
 
-//     sdsfree(y);
-//     sdsfree(x);
-//     x = sdsnew("bara");
-//     y = sdsnew("bar");
-//     test_cond("sdscmp(bara,bar)", sdscmp(x,y) > 0)
+    sdsfree(y);
+    sdsfree(x);
+    x = sdsnew("bara");
+    y = sdsnew("bar");
+    test_cond("sdscmp(bara,bar)", sdscmp(x,y) > 0)
 
 //     // sdsfree(y);
 //     // sdsfree(x);
@@ -345,5 +369,5 @@ int sdscmp(sds s1,sds s2){
 //     // argv = sdssplitargs(line, &count);
 //     // sdsSplitArgsPrint(line,argv,count);
 
-//     return 0;
-// }
+    return 0;
+}
