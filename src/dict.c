@@ -14,7 +14,6 @@
 #include "redisassert.h"
 
 #include <assert.h>
-// #include "intdicttype.h"
 #include "dictType.h"
 
 extern dictType initDictType;

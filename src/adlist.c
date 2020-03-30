@@ -164,8 +164,8 @@ list *listAddNodeTail(list *list,void *value){
 /**
  * 创建一个包含值 value 的新节点，并将它添加到 old_node 之前或之后
  * 
- * 如果 after = 0，将新节点添加到 old_node 之后
- * 如果 after = 1，将新节点添加到 old_node 之前
+ * 如果 after = 1，将新节点添加到 old_node 之后
+ * 如果 after = 0，将新节点添加到 old_node 之前
  *
  * T = O(1)
  */

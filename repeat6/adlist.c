@@ -240,7 +240,7 @@ void listDelNode(list *list, listNode *node) {
 }
 
 // 通过索引值获取节点
-listNode *listIndex(list *list, int index) {
+listNode *listIndex(list *list, long index) {
 
     listNode *n;
     // 负索引
@@ -258,7 +258,7 @@ listNode *listIndex(list *list, int index) {
 }
 
 // 将表尾节点放到表头
-list *listRotate(list *list) {
+void listRotate(list *list) {
 
     listNode *tail = list->tail;
 
