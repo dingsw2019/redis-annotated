@@ -29,9 +29,10 @@ typedef struct zskiplist {
 } zskiplist;
 
 // 范围搜索器
-typedef struct zskiplistspec {
+typedef struct zrangespec {
 
     double min, max;
 
+    // 1 表示不包含 , 0 包含
     int minex, maxex;
-} zskiplistspec;
+} zrangespec;
