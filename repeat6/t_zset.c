@@ -50,8 +50,6 @@ int zslIsInRange(zskiplist *zsl, zrangespec *range) {
     return 1;
 }
 
-
-
 /*--------------------- API ---------------------*/
 
 // 创建并返回节点
@@ -150,7 +148,7 @@ void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update) {
 
     // 尝试更新最大层数
     while (zsl->level>1 && zsl->header->level[zsl->level-1].forward == NULL) 
-        zsl->level++;
+        zsl->level--;
 
     // 更新节点数
     zsl->length--;
@@ -278,6 +276,12 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     return x;
 }
 
+
+
+
+
+
+
 // 返回符合搜索条件的第一个节点
 // 如果不存在返回 NULL
 zskiplistNode *zslFirstInRange(zskiplist *zsl, zrangespec *range) {
@@ -394,6 +398,76 @@ zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank) {
     return NULL;
 }
 
+// 删除指定范围的节点
+// 返回删除节点数量
+unsigned long zslDeleteRangeByScore(zskiplist *zsl, zrangespec *range) {
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    unsigned long removed = 0;
+    int i;
+
+    // 找到要删除的起始节点
+    x = zsl->header;
+    for (i=zsl->level-1; i>=0; i--) {
+
+        while (x->level[i].forward && (range->minex ? 
+                    x->level[i].forward->score <= range->min :
+                    x->level[i].forward->score < range->min))
+        {
+            x = x->level[i].forward;
+        }
+
+        update[i] = x;
+    }
+
+    // 遍历删除节点
+    x = x->level[0].forward;
+    while (x && zslValueLteMax(x->score, range)) {
+        zskiplistNode *next = x->level[0].forward;
+        zslDeleteNode(zsl,x,update);
+        zslFreeNode(x);
+        removed++;
+        x = next;
+    }
+
+    return removed;
+}
+
+// 删除索引范围内的节点
+// 返回删除节点数
+unsigned long zslDeleteRangeByRank(zskiplist *zsl, unsigned int start, unsigned int end) {
+
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    unsigned long traversed = 0, removed = 0;
+    int i;
+    // 查找起始节点
+    x = zsl->header;
+    for (i=zsl->level-1; i>=0; i--) {
+
+        while (x->level[i].forward && (x->level[i].span + traversed)<start) {
+
+            traversed += x->level[i].span;
+            x = x->level[i].forward;
+        }
+
+        update[i] = x;
+    }
+
+    // 删除节点
+    traversed++;
+    x = x->level[0].forward;
+    while (x && traversed <= end) {
+
+        zskiplistNode *next = x->level[0].forward;
+        zslDeleteNode(zsl, x, update);
+        zslFreeNode(x);
+        removed++;
+        traversed++;
+        x = next;
+    }
+
+    return removed;
+}
+
 //gcc -g zmalloc.c sds.c t_zset.c
 int main(void) {
 
@@ -440,17 +514,17 @@ int main(void) {
     node = zslGetElementByRank(zsl, 4);
     printf("%s->%f\n", node->ele, node->score);
 
-    // // 分值范围删除节点
-    // zrangespec range2 = {       
-    //     .min = 20.0,
-    //     .max = 40.0,
-    //     .minex = 0,
-    //     .maxex = 0
-    // };
-    // ret = zslDeleteRangeByScore(zsl,&range2);
-    // printf("zslDeleteRangeByScore 20.0 <= x <= 40.0, removed : %d\n",ret);
+    // 分值范围删除节点
+    zrangespec range2 = {       
+        .min = 20.0,
+        .max = 40.0,
+        .minex = 0,
+        .maxex = 0
+    };
+    ret = zslDeleteRangeByScore(zsl,&range2);
+    printf("zslDeleteRangeByScore 20.0 <= x <= 40.0, removed : %d\n",ret);
 
-    // // 索引范围删除节点
+    // 索引范围删除节点
     // ret = zslDeleteRangeByRank(zsl,1,2);
     // printf("zslDeleteRangeByRank 1 & 2 index, removed : %d\n",ret);
 
