@@ -395,8 +395,46 @@ dictEntry *dictGetRandomKey(dict *d) {
 }
 
 // 随机获取多个节点
-// int dictGetRandomKeys(dict *d, dictEntry **des, int count) {
-// }
+int dictGetRandomKeys(dict *d, dictEntry **des, int count) {
+
+    int j;
+    int stored = 0;
+
+    if (dictSize(d) < count) count = dictSize(d);
+
+    while (stored < count) {
+
+        // 遍历哈希表
+        for(j=0; j<2; j++) {
+
+            // 确定起始节点的索引值
+            unsigned int i = rand() & d->ht[j].sizemask;
+            // 剩余节点数
+            int size = d->ht[j].size;
+
+            while(size--) {
+                dictEntry *he = d->ht[j].table[i];
+
+                // 遍历链表
+                while (he) {
+                    *des = he;
+                    des++;
+                    stored++;
+                    he = he->next;
+                    // 添加节点
+                    if (stored == count) return stored;
+                }
+
+                // 处理下一个节点
+                i = (i+1) % d->ht[j].sizemask;
+            }
+
+            assert(dictIsRehashing(d) != 0);
+        }
+    }
+
+    return stored;
+}
 
 // key不存在, 新增节点, 返回 1
 // key  存在, 修改节点值, 返回 0
