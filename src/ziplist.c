@@ -561,7 +561,7 @@ static unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p
         // 那就不用改呀
         if (next.prevrawlen == rawlen) break;
 
-        // 触发更新
+        // 触发扩容
         if (next.prevrawlensize < rawlensize) {
             
             offset = p - zl;
@@ -593,18 +593,21 @@ static unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p
             p += rawlen;
             curlen += extra;
 
-        // 未触发更新
+        // 未触发扩容
         } else {
 
             // 后置节点的prev字节数大于当前字节数
             if (next.prevrawlensize > rawlensize) {
-
+                
+                // 修改前置节点的总长度
                 zipPrevEncodeLengthForceLarge(p+rawlen, rawlen);
             // 后置节点的prev字节数等于当前字节数
             } else {
                 zipPrevEncodeLength(p+rawlen,rawlen);
             }
 
+            // 当前节点没有扩容, 字节数不变, 
+            // 之后的节点就没有增加的条件了, 所以结束循环
             break;
         }
     }
@@ -1184,8 +1187,8 @@ unsigned int ziplistLen(unsigned char *zl) {
     unsigned int len = 0;
 
     // 小于 UINT16_MAX 时, 调用宏获取节点数
-    if (intrev32ifbe(ZIPLIST_LENGTH(zl)) < UINT16_MAX) {
-        len = intrev32ifbe(ZIPLIST_LENGTH(zl));
+    if (intrev16ifbe(ZIPLIST_LENGTH(zl)) < UINT16_MAX) {
+        len = intrev16ifbe(ZIPLIST_LENGTH(zl));
 
     // 大于 UINT16_MAX, 需要迭代计算节点数
     } else {
@@ -1196,7 +1199,7 @@ unsigned int ziplistLen(unsigned char *zl) {
         }
 
         // 如果节点数小于 UINT16_MAX , 更新节计数器
-        if (len < UINT16_MAX) ZIPLIST_LENGTH(zl) = intrev32ifbe(len);
+        if (len < UINT16_MAX) ZIPLIST_LENGTH(zl) = intrev16ifbe(len);
     }
 
     // 返回节点数
