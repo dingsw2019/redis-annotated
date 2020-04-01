@@ -30,6 +30,7 @@
 // 4 位整数的取值范围
 #define ZIP_INT_IMM_MAX 0xf1
 #define ZIP_INT_IMM_MIN 0xfd
+#define ZIP_INT_IMM_MASK 0x0f
 
 // 24 的取值范围
 #define INT24_MAX 0x7fffff

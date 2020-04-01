@@ -31,16 +31,16 @@ static int zipIntSize(unsigned char encoding) {
 static unsigned int zipPrevEncodeLength(unsigned char *p, unsigned int len) {
 
     if (p == NULL) {
-        return (len < ZIP_BIGLEN) ? 1 : 5;
+        return (len < ZIP_BIGLEN) ? 1 : sizeof(len)+1;
     } else {
         if (len < ZIP_BIGLEN) {
-            ((uint8_t*)p)[0] = len;
+            p[0] = len;
             return 1;
         } else {
             p[0] = ZIP_BIGLEN;
             memcpy(p+1, &len, sizeof(len));
             memrev32ifbe(p+1);
-            return 5;
+            return sizeof(len)+1;
         }
     }
 }
@@ -81,6 +81,10 @@ static unsigned int zipEncodeLength(unsigned char *p, unsigned char encoding, un
 // 将前置节点长度编码到 5 字节的空间中
 static void zipPrevEncodeLengthForceLarge(unsigned char *p, unsigned int len) {
 
+    if (p == NULL) return ;
+    p[0] = ZIP_BIGLEN;
+    memcpy(p+1, &len, sizeof(len));
+    memrev32ifbe(p+1);
 }
 
 /*--------------------- decode --------------------*/
@@ -136,7 +140,233 @@ static void zipPrevEncodeLengthForceLarge(unsigned char *p, unsigned int len) {
 }while(0)
 
 /*--------------------- base --------------------*/
+// 节点总字节数
+static unsigned int zipRawEntryLength(unsigned char *p) {
+    unsigned int prevlensize, encoding, lensize, len;
 
+    ZIP_DECODE_PREVLENSIZE(p, prevlensize);
+
+    ZIP_DECODE_LENGTH(p + prevlensize, encoding, lensize, len);
+
+    return prevlensize + lensize + len;
+}
+
+// 新前置节点长度(len) 与 p 所指向节点的前置节点字节数的差值
+static int zipPrevLenByteDiff(unsigned char *p, unsigned int len) {
+
+    unsigned int prevlensize;
+
+    ZIP_DECODE_PREVLENSIZE(p, prevlensize);
+
+    return zipPrevEncodeLength(NULL,len) - prevlensize;
+}
+
+// 尝试将字符型数值转换为整型, 并将编码和整数写入指针中
+// 成功返回 1, 否则返回 0
+static int zipTryEncoding(unsigned char *s, unsigned int slen, long long *v, unsigned char *encoding) {
+
+    long long value;
+
+    if (slen >= 32 || slen == 0) return 0;
+
+    if (string2ll(s, slen, &value)) {
+
+        if (value >= 0 && value <= 12) {
+            (*encoding) = ZIP_INT_IMM_MIN + value;
+        } else if (value >= INT8_MIN && value <= INT8_MAX) {
+            (*encoding) = ZIP_INT_8B;
+
+        } else if (value >= INT16_MIN && value <= INT16_MAX) {
+            (*encoding) = ZIP_INT_16B;
+
+        } else if (value >= INT24_MIN && value <= INT24_MAX) {
+            (*encoding) = ZIP_INT_24B;
+
+        } else if (value >= INT32_MIN && value <= INT32_MAX) {
+            (*encoding) = ZIP_INT_32B;
+
+        } else {
+            (*encoding) = ZIP_INT_64B;
+        }
+
+        *v = value;
+
+        return 1;
+    }
+
+    return 0;
+}
+
+// 将整数值保存到节点中
+static void zipSaveInteger(unsigned char *p, int64_t value, unsigned char encoding) {
+
+    int16_t i16;
+    int32_t i32;
+    int64_t i64;
+
+    if (encoding == ZIP_INT_8B) {
+        ((int8_t*)p)[0] = (int8_t*)value;
+    } else if (encoding == ZIP_INT_16B) {
+        i16 = value;
+        memcpy(p, &i16, sizeof(i16));
+        memrev16ifbe(p);
+    } else if (encoding == ZIP_INT_24B) {
+        i32 = value << 8;
+        memrev32ifbe(&i32);
+        memcpy(p, ((uint8_t*)&i32)+1, sizeof(i32)-sizeof(uint8_t));
+    } else if (encoding == ZIP_INT_32B) {
+        i32 = value;
+        memcpy(p, &i32, sizeof(i32));
+        memrev32ifbe(p);
+    } else if (encoding == ZIP_INT_64B) {
+        i64 = value;
+        memcpy(p, &i64, sizeof(i64));
+        memrev64ifbe(p);
+    } else if (encoding >= ZIP_INT_IMM_MIN && encoding <= ZIP_INT_IMM_MAX) {
+        /* nothing */
+    } else {
+        assert(NULL);
+    }
+}
+
+// 从节点中读取整数值
+static int64_t zipLoadInteger(unsigned char *p, unsigned char encoding) {
+
+    int16_t i16;
+    int32_t i32;
+    int64_t i64, ret = 0;
+
+    if (encoding == ZIP_INT_8B) {
+        ret = ((int8_t*)p)[0];
+    } else if (encoding == ZIP_INT_16B) {
+        memcpy(&i16, p, sizeof(i16));
+        memrev16ifbe(&i16);
+        ret = i16;
+    } else if (encoding == ZIP_INT_24B) {
+        i32 = 0;
+        memcpy(((uint8_t*)&i32)+1, p, sizeof(i32)-sizeof(uint8_t));
+        memrev32ifbe(&i32);
+        ret = i32 >> 8;
+    } else if (encoding == ZIP_INT_32B) {
+        memcpy(&i32, p, sizeof(i32));
+        memrev32ifbe(&i32);
+        ret = i32;
+    } else if (encoding == ZIP_INT_64B) {
+        memcpy(&i64, p, sizeof(i64));
+        memrev64ifbe(&i64);
+        ret = i64;
+    } else if (encoding >= ZIP_INT_IMM_MIN && encoding <= ZIP_INT_IMM_MAX) {
+        ret = (encoding & ZIP_INT_IMM_MASK) -1
+    } else {
+        assert(NULL);
+    }
+
+    return ret;
+}
+
+// 返回节点结构体
+static zlentry zipEntry(unsigned char *p) {
+
+    zlentry e;
+
+    ZIP_DECODE_PREVLEN(p, e.prevrawlensize, e.prevrawlen);
+
+    ZIP_DECODE_LENGTH(p + e.prevrawlensize, e.encoding, e.lensize, e.len);
+
+    e.headersize = e.prevrawlensize + e.lensize;
+
+    e.p = p;
+
+    return e;
+}
+
+// p 节点之前添加一个新节点
+// 返回添加完成的列表指针
+static unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned char *s, unsigned int slen) {
+
+    unsigned int curlen = intrev32ifbe(ZIPLIST_BYTES(zl)), prevlen, reqlen, offset;
+    int nextdiff = 0;
+    long long value;
+    unsigned char encoding = 0;
+    zlentry entry, tail;
+
+    // 前置节点长度
+    if (p[0] != ZIP_END) {
+        entry = zipEntry(p);
+        prevlen = entry.prevrawlen;
+    } else {
+        unsigned char *ptail = ZIPLIST_ENTRY_TAIL(zl);
+        if (ptail[0] != ZIP_END) {
+            prevlen = zipRawEntryLength(ptail);
+        }
+    }
+
+    // 当前节点长度所占用的字节数
+    if (zipTryEncoding(s, slen, &value, &encoding)) {
+        reqlen = zipIntSize(encoding);
+    } else {
+        reqlen = slen;
+    }
+
+    // 前置节点长度占用字节数
+    reqlen += zipPrevEncodeLength(NULL, prevlen);
+
+    // 当前编码长度占用字节数
+    reqlen += zipEncodeLength(NULL, encoding, slen);
+
+    // 计算 nextdiff
+    nextdiff = (p[0] != ZIP_END) ? zipPrevLenByteDiff(p, prevlen) : 0;
+    
+    // 扩容
+    // zl = ziplistResize(zl, curlen+reqlen+nextdiff);
+
+    // 添加新节点的位置
+    // 中间添加
+    if (p[0] != ZIP_END) {
+
+        // 移动原数据
+        offset = p-zl;
+        memmove(p+reqlen, p-nextdiff, curlen-offset-1+nextdiff);
+        p = zl+offset;
+
+        // 更新前置节点长度到 nextdiff 所在的节点
+        zipPrevEncodeLength(p+reqlen, reqlen);
+
+        // 更新尾节点偏移量
+        ZIPLIST_TAIL_OFFSET(zl) = 
+            intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+reqlen);
+
+        // 尝试将 nextdiff 添加到尾节点偏移量
+        tail = zipEntry(p+reqlen);
+        if (p[reqlen+tail.headersize+tail.len] != ZIP_END) {
+            ZIPLIST_TAIL_OFFSET(zl) = 
+                intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+nextdiff);
+        }
+
+        // 连锁更新
+        zl = __ziplistCascadeUpdate(zl, p+reqlen);
+
+    // 尾部添加
+    } else {
+
+        // 更新尾节点偏移量
+        ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(p-zl);
+    }
+
+    // 写入节点的前置节点长度, 编码, 节点值
+    p += zipPrevEncodeLength(p, prevlen);
+    p += zipEncodeLength(p, encoding, reqlen);
+    if (ZIP_IS_STR(encoding)) {
+        memcpy(p, s, slen);
+    } else {
+        zipSaveInteger(p, value, encoding);
+    }
+
+    // 更新节点数量
+    ZIP_INCR_LENGTH(zl, 1);
+
+    return zl;
+}
 
 /*--------------------- API --------------------*/
 
