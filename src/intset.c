@@ -280,7 +280,7 @@ intset *intsetNew(void) {
  */
 intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
 
-    // 获取 value 的编码凡是
+    // 获取 value 的编码方式
     uint8_t valenc = _intsetValueEncoding(value);
     uint32_t pos;
 
