@@ -3,6 +3,15 @@
  * 
  * 为什么用 unsigned char, 详见以下链接
  * @link https://www.runoob.com/cprogramming/c-function-printf.html
+ * 
+ * 图解Redis压缩列表-数据结构
+ * @link https://www.jianshu.com/p/30d1b5b6d62d
+ * 
+ * 图解Redis压缩列表-添加节点
+ * @link https://www.jianshu.com/p/8205336ed227
+ * 
+ * 图解Redis压缩列表-连锁更新
+ * @link https://www.jianshu.com/p/b5d111bee6d9
  */
 
 #include <stdio.h>
