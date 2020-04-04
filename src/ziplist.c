@@ -12,6 +12,12 @@
  * 
  * 图解Redis压缩列表-连锁更新
  * @link https://www.jianshu.com/p/b5d111bee6d9
+ * 
+ * 图解Redis压缩列表-删除节点
+ * @link https://www.jianshu.com/p/62ccf148266e
+ * 
+ * 图解Redis压缩列表-遍历节点
+ * @link https://www.jianshu.com/p/3f5fd13d2e5c
  */
 
 #include <stdio.h>
