@@ -1,3 +1,8 @@
+/**
+ * 
+ * 图解Redis整数集合
+ * @link https://www.jianshu.com/p/2d97a7ef89a1
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
