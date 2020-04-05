@@ -52,3 +52,16 @@ typedef struct
     // 值为 1 表示不包含, 值为 0 表示包含
     int minex, maxex;
 } zrangespec;
+
+// redis对象
+typedef struct redisObject {
+
+    // 对象类型(从使用者角度定义的类型)
+    unsigned type:4;
+
+    // 值对象的编码方式
+    unsigned encoding:4;
+
+    // 指向实际指针
+    void *ptr;
+} redisObject;
