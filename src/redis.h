@@ -53,6 +53,10 @@ typedef struct
     int minex, maxex;
 } zrangespec;
 
+// LRU 是Least Recently Used的缩写
+// 即最近最少使用，是一种常用的页面置换算法，选择最近最久未使用的页面予以淘汰。 
+#define REDIS_LRU_BITS 24
+
 // redis对象
 typedef struct redisObject {
 
@@ -61,6 +65,12 @@ typedef struct redisObject {
 
     // 值对象的编码方式
     unsigned encoding:4;
+
+    // 对象最后一次呗访问的时间
+    unsigned lru:REDIS_LRU_BITS;
+
+    // 引用计数
+    int refcount;
 
     // 指向实际指针
     void *ptr;
