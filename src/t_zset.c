@@ -559,6 +559,7 @@ unsigned long zslDeleteRangeByRank(zskiplist *zsl, unsigned int start, unsigned 
     return removed;
 }
 
+#ifdef ZSKIPLIST_TEST_MAIN
 //gcc -g zmalloc.c sds.c t_zset.c
 int main(void) {
 
@@ -626,3 +627,5 @@ int main(void) {
     
     return 0;
 }
+
+#endif

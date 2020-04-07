@@ -204,15 +204,15 @@ robj *createZiplistObject(void) {
 /**
  * 创建一个 HT 编码的空集合对象
  */
-robj *createSetObject(void) {
-    dict *d = dictCreate(&setDictType, NULL);
+// robj *createSetObject(void) {
+//     dict *d = dictCreate(&setDictType, NULL);
 
-    robj *o = createObject(REDIS_SET, d);
+//     robj *o = createObject(REDIS_SET, d);
 
-    o->encoding = REDIS_ENCODING_HT;
+//     o->encoding = REDIS_ENCODING_HT;
 
-    return o;
-}
+//     return o;
+// }
 
 /**
  * 创建一个 INTSET 编码的空集合对象
@@ -227,6 +227,55 @@ robj *createIntsetObject(void) {
 
     return o;
 }
+
+
+/**
+ * 创建一个 ZIPLIST 编码的空哈希对象
+ */
+robj *createHashObject(void) {
+
+    unsigned char *zl = ziplistNew();
+
+    robj *o = createObject(REDIS_HASH, zl);
+
+    o->encoding = REDIS_ENCODING_ZIPLIST;
+
+    return o;
+}
+
+/**
+ * 创建一个 SKIPLIST 编码的空的有序集合
+ */
+robj *createZsetObject(void) {
+
+    zset *zs = zmalloc(sizeof(*zs));
+
+    robj *o;
+
+    zs->dict = dictCreate(&zsetDictType, NULL);
+    zs->zsl = zslCreate();
+
+    o = createObject(REDIS_ZSET, zs);
+
+    o->encoding = REDIS_ENCODING_SKIPLIST;
+
+    return o;
+}
+
+/**
+ * 创建一个 ZIPLIST 编码的空的有序集合
+ */
+robj *createZsetZiplistObject(void) {
+
+    unsigned char *zl = ziplistNew();
+
+    robj *o = createObject(REDIS_ZSET, zl);
+
+    o->encoding = REDIS_ENCODING_ZIPLIST;
+
+    return o;
+}
+
 
 /**
  * 对象的引用计数减 1
@@ -414,5 +463,16 @@ int main () {
         freeListObject(o);
         printf("OK\n");
     }
+
+    // 创建一个 intset 的空集合对象
+    printf("create and free intset set object: ");
+    {
+        o = createIntsetObject();
+        assert(o->type == REDIS_SET);
+        assert(o->encoding == REDIS_ENCODING_INTSET);
+        freeSetObject(o);
+        printf("OK\n");
+    }
+
 
 }

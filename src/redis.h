@@ -79,6 +79,23 @@ typedef struct zskiplist
     int level;
 } zskiplist;
 
+/**
+ * 有序集合
+ * 保存两种结构, 是为在不同场景下的操作, 取最优解
+ */
+typedef struct zset {
+
+    // 字典, 键为成员, 值为分值
+    // 用于支持 O(1) 复杂度的按成员取分值操作
+    dict *dict;
+
+    // 跳跃表, 按分值排序成员
+    // 用于支持平均复杂度为 O(log N) 的按分值定位成员操作
+    // 以及范围操作
+    zskiplist *zsl;
+
+} zset;
+
 // 表示开区间/闭区间范围的结构
 typedef struct 
 {
@@ -150,7 +167,7 @@ void incrRefCount(robj *o);
 robj *resetRefCount(robj *obj);
 void freeStringObject(robj *o);
 void freeListObject(robj *o);
-// void freeSetObject(robj *o);
+void freeSetObject(robj *o);
 // void freeZsetObject(robj *o);
 // void freeHashObject(robj *o);
 robj *createObject(int type, void *ptr);
@@ -163,6 +180,20 @@ robj *createStringObjectFromLongLong(long long value);
 // robj *createStringObjectFromLongDouble(long double value);
 
 
+/* 压缩列表 API */
+zskiplist *zslCreate(void);
+void zslFree(zskiplist *zsl);
+zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj);
+unsigned char *zzlInsert(unsigned char *zl, robj *ele, double score);
+int zslDelete(zskiplist *zsl, double score, robj *obj);
+zskiplistNode *zslFirstInRange(zskiplist *zsl, zrangespec *range);
+zskiplistNode *zslLastInRange(zskiplist *zsl, zrangespec *range);
+double zzlGetScore(unsigned char *sptr);
+void zzlNext(unsigned char *zl, unsigned char **eptr, unsigned char **sptr);
+void zzlPrev(unsigned char *zl, unsigned char **eptr, unsigned char **sptr);
+unsigned int zsetLength(robj *zobj);
+void zsetConvert(robj *zobj, int encoding);
+unsigned long zslGetRank(zskiplist *zsl, double score, robj *o);
 
 
 #endif

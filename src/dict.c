@@ -350,7 +350,7 @@ dictEntry *dictAddRaw(dict *d,void *key){
  * 
  * T = O(N)
  */
-dictEntry *dictFind(dict *d,void *key){
+dictEntry *dictFind(dict *d,const void *key){
 
     dictEntry *he;
     unsigned long h,idx,table;
@@ -640,7 +640,7 @@ int dictGenericDelete(dict *d,const void *key,int nofree){
  * 释放返回 DICT_OK,未找到返回 DICT_ERR
  * T = O(1)
  */
-int dictDelete(dict *d,void *key){
+int dictDelete(dict *d,const void *key){
     return dictGenericDelete(d,key,0);
 }
 
@@ -652,7 +652,7 @@ int dictDelete(dict *d,void *key){
  *
  * T = O(1)
  */
-int dictDeleteNoFree(dict *ht,void *key)
+int dictDeleteNoFree(dict *ht,const void *key)
 {
     return dictGenericDelete(ht,key,1);
 }
