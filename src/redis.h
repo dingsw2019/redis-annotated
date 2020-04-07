@@ -5,8 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "zmalloc.h"
+
 #include "sds.h"
+#include "dict.h"
+#include "adlist.h"
+#include "zmalloc.h"
+#include "ziplist.h"
+#include "intset.h"
+#include "util.h"
 
 #define REDIS_OK 0
 #define REDIS_ERR -1
@@ -136,5 +142,27 @@ struct sharedObjectsStruct {
  * Extern declarations
  *----------------------------------------------------------------------------*/
 extern struct sharedObjectsStruct shared;
+
+/* Redis 对象实现 */
+void decrRefCount(robj *o);
+void decrRefCountVoid(void *o);
+void incrRefCount(robj *o);
+robj *resetRefCount(robj *obj);
+void freeStringObject(robj *o);
+void freeListObject(robj *o);
+// void freeSetObject(robj *o);
+// void freeZsetObject(robj *o);
+// void freeHashObject(robj *o);
+robj *createObject(int type, void *ptr);
+robj *createStringObject(char *ptr, size_t len);
+robj *createRawStringObject(char *ptr, size_t len);;
+robj *createEmbeddeStringObject(char *ptr, size_t len);
+robj *dupStringObject(robj *o);
+
+robj *createStringObjectFromLongLong(long long value);
+// robj *createStringObjectFromLongDouble(long double value);
+
+
+
 
 #endif

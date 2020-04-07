@@ -863,6 +863,7 @@ static void _dictRehashStep(dict *d)
     if (d->iterators == 0) dictRehash(d,1);
 }
 
+#ifdef DICT_TEST_MAIN
 /* ------------------------------- Debugging --------------------------------- */
 #define DICT_STATS_VECTLEN 50
 
@@ -1022,5 +1023,6 @@ void main(void)
     
     // 释放字典
     dictRelease(d);
-
 }
+
+#endif

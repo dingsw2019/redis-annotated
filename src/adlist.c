@@ -480,6 +480,7 @@ void listRotate(list *list){
     list->head = tail;
 }
 
+#ifdef ADLIST_TEST_MAIN
 /**
  * 字符串 str1 与 str2 是否相等
  * 
@@ -586,3 +587,4 @@ int main(void){
 
     return 0;
 }
+#endif

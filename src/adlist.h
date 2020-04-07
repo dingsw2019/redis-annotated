@@ -61,6 +61,9 @@ typedef struct list {
  */
 #define listLength(l) ((l)->len)
 
+// 将链表 l 的值释放函数设置为 m
+#define listSetFreeMethod(l,m) ((l)->free = (m))
+
 // 将链表的对比函数设置为 m
 // T = O(1)
 #define listSetMatchMethod(l,m) ((l)->match = (m))

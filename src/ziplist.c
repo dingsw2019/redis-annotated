@@ -544,6 +544,27 @@ static zlentry zipEntry(unsigned char *p) {
 }
 
 /**
+ * 调整压缩列表的大小为 len 字节
+ * 
+ * 当 ziplist 原长度小于 len 时, 扩展后的现有元素不会改变
+ * 
+ * T = O(N)
+ */
+static unsigned char *ziplistResize(unsigned char *zl, unsigned int len) {
+
+    // realloc, 扩容不改变现有元素
+    zl = zrealloc(zl, len);
+
+    // 更新列表总字节数
+    ZIPLIST_BYTES(zl) = intrev32ifbe(len);
+
+    // 更新列表末端标识符
+    zl[len-1] = ZIP_END;
+
+    return zl;
+}
+
+/**
  * 检查并执行连锁更新
  * 添加新节点的长度超出后置节点的prevlensize, 就需要扩容后置节点的 prevlensize
  * 反之,删除节点 prevlensize 也会更新但不会缩小内存空间
@@ -860,31 +881,6 @@ unsigned char *ziplistNew(void) {
     // 返回
     return zl;
 }
-
-/**
- * 调整压缩列表的大小为 len 字节
- * 
- * 当 ziplist 原长度小于 len 时, 扩展后的现有元素不会改变
- * 
- * T = O(N)
- */
-static unsigned char *ziplistResize(unsigned char *zl, unsigned int len) {
-
-    // realloc, 扩容不改变现有元素
-    zl = zrealloc(zl, len);
-
-    // 更新列表总字节数
-    ZIPLIST_BYTES(zl) = intrev32ifbe(len);
-
-    // 更新列表末端标识符
-    zl[len-1] = ZIP_END;
-
-    return zl;
-}
-
-
-
-
 
 /**
  * 将长度为 slen 的字符串 s 添加到压缩列表中
@@ -1228,6 +1224,7 @@ size_t ziplistBlobLen(unsigned char *zl) {
     return intrev32ifbe(ZIPLIST_BYTES(zl));
 }
 
+#ifdef ZIPLIST_TEST_MAIN
 /*--------------------- debug --------------------*/
 #include <sys/time.h>
 #include <assert.h>
@@ -1861,3 +1858,4 @@ int main(void) {
 
     return 0;
 }
+#endif
