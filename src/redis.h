@@ -11,6 +11,11 @@
 #define REDIS_OK 0
 #define REDIS_ERR -1
 
+/* 默认的服务器配置值*/
+
+#define REDIS_SHARED_INTEGERS 10000  /* redis字符串对象的整数编码的共享整数范围(1~10000) */
+#define REDIS_SHARED_SELECT_CMDS 10
+
 // 对象类型
 #define REDIS_STRING 0
 #define REDIS_LIST 1
@@ -84,6 +89,7 @@ typedef struct
 #define REDIS_LRU_BITS 24
 #define REDIS_LRU_CLOCK_MAX ((1<<REDIS_LRU_BITS)-1) /* robj->lru 的最大值 */
 #define REDIS_LRU_CLOCK_RESOLUTION 1000
+#define REDIS_SHARED_BULKHDR_LEN 32
 
 // redis对象
 typedef struct redisObject {
@@ -108,5 +114,27 @@ typedef struct redisObject {
 
 // todo 暂时简化
 #define LRU_CLOCK() 1000
+
+
+// 通过复用来减少内存碎片, 以及减少操作耗时的共享对象
+struct sharedObjectsStruct {
+    robj *crlf, *ok, *err, *emptybulk, *czero, *cone, *cnegone, *pong, *space,
+    *colon, *nullbulk, *nullmultibulk, *queued,
+    *emptymultibulk, *wrongtypeerr, *nokeyerr, *syntaxerr, *sameobjecterr,
+    *outofrangeerr, *noscripterr, *loadingerr, *slowscripterr, *bgsaveerr,
+    *masterdownerr, *roslaveerr, *execaborterr, *noautherr, *noreplicaserr,
+    *busykeyerr, *oomerr, *plus, *messagebulk, *pmessagebulk, *subscribebulk,
+    *unsubscribebulk, *psubscribebulk, *punsubscribebulk, *del, *rpop, *lpop,
+    *lpush, *emptyscan, *minstring, *maxstring,
+    *select[REDIS_SHARED_SELECT_CMDS],
+    *integers[REDIS_SHARED_INTEGERS],
+    *mbulkhdr[REDIS_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
+    *bulkhdr[REDIS_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
+};
+
+/*-----------------------------------------------------------------------------
+ * Extern declarations
+ *----------------------------------------------------------------------------*/
+extern struct sharedObjectsStruct shared;
 
 #endif

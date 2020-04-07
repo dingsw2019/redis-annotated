@@ -331,6 +331,56 @@ sds sdscpy(sds s,const char *t){
 }
 
 /**
+ * long long 型整数转换成字符串
+ * 所需要的数组长度
+ */
+#define SDS_LLSTR_SIZE 21
+
+/**
+ * 将 value 转换成字符串, 存入 *s 指针中
+ * 返回字符串的长度
+ */
+int sdsll2str(char *s, long long value) {
+    char *p, aux;
+    unsigned long long v;
+    size_t l;
+
+    // 生成反方向字符串
+    v = (value < 0) ? -value : value;
+    p = s;
+    do {
+        *p++ = '0'+(v%10);
+        v /= 10;
+    } while(v);
+    if (value < 0) *p++ = '-';
+
+    // 计算字符串长度, 添加终结符
+    l = p-s;
+    *p = '\0';
+
+    // 字符串反转
+    p--;
+    while (s < p) {
+        aux = *s;
+        *s = *p;
+        *p = aux;
+        s++;
+        p--;
+    }
+
+    return l;
+}
+
+/**
+ * 将 long long 型整数转换成字符串后存入 sds
+ */
+sds sdsfromlonglong(long long value) {
+    char buf[SDS_LLSTR_SIZE];
+    int len = sdsll2str(buf, value);
+    return sdsnewlen(buf, len);
+}
+
+/**
  * 打印函数, 被 sdscatprintf 调用
  */
 sds sdscatvprintf(sds s, const char *fmt, va_list ap){
@@ -813,5 +863,5 @@ void sdsSplitArgsPrint(const char *line,sds *argv,int count){
 //     argv = sdssplitargs(line, &count);
 //     sdsSplitArgsPrint(line,argv,count);
 
-//     return 0;
+    // return 0;
 // }
