@@ -1,3 +1,6 @@
+#ifndef __REDIS_H
+#define __REDIS_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,6 +8,29 @@
 #include "zmalloc.h"
 #include "sds.h"
 
+#define REDIS_OK 0
+#define REDIS_ERR -1
+
+// 对象类型
+#define REDIS_STRING 0
+#define REDIS_LIST 1
+#define REDIS_SET 2
+#define REDIS_ZSET 3
+#define REDIS_HASH 4
+
+// 对象编码
+#define REDIS_ENCODING_RAW 0
+#define REDIS_ENCODING_INT 1
+#define REDIS_ENCODING_HT 2
+#define REDIS_ENCODING_ZIPMAP 3
+#define REDIS_ENCODING_LINKEDLIST 4
+#define REDIS_ENCODING_ZIPLIST 5
+#define REDIS_ENCODING_INTSET 6
+#define REDIS_ENCODING_SKIPLIST 7
+#define REDIS_ENCODING_EMBSTR 8
+
+
+/*--------------------- 压缩列表 -----------------------*/
 
 #define ZSKIPLIST_MAXLEVEL 32
 #define ZSKIPLIST_P 0.25
@@ -56,6 +82,8 @@ typedef struct
 // LRU 是Least Recently Used的缩写
 // 即最近最少使用，是一种常用的页面置换算法，选择最近最久未使用的页面予以淘汰。 
 #define REDIS_LRU_BITS 24
+#define REDIS_LRU_CLOCK_MAX ((1<<REDIS_LRU_BITS)-1) /* robj->lru 的最大值 */
+#define REDIS_LRU_CLOCK_RESOLUTION 1000
 
 // redis对象
 typedef struct redisObject {
@@ -66,7 +94,9 @@ typedef struct redisObject {
     // 值对象的编码方式
     unsigned encoding:4;
 
-    // 对象最后一次呗访问的时间
+    // 对象最后一次被访问的时间
+    // 用于计算对象空转时长
+    // 设置 maxmemory, 会优先释放空转时间长的对象
     unsigned lru:REDIS_LRU_BITS;
 
     // 引用计数
@@ -74,4 +104,9 @@ typedef struct redisObject {
 
     // 指向实际指针
     void *ptr;
-} redisObject;
+} robj;
+
+// todo 暂时简化
+#define LRU_CLOCK() 1000
+
+#endif
