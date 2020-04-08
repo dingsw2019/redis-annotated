@@ -204,15 +204,15 @@ robj *createZiplistObject(void) {
 /**
  * 创建一个 HT 编码的空集合对象
  */
-// robj *createSetObject(void) {
-//     dict *d = dictCreate(&setDictType, NULL);
+robj *createSetObject(void) {
+    dict *d = dictCreate(&setDictType, NULL);
 
-//     robj *o = createObject(REDIS_SET, d);
+    robj *o = createObject(REDIS_SET, d);
 
-//     o->encoding = REDIS_ENCODING_HT;
+    o->encoding = REDIS_ENCODING_HT;
 
-//     return o;
-// }
+    return o;
+}
 
 /**
  * 创建一个 INTSET 编码的空集合对象
@@ -276,40 +276,6 @@ robj *createZsetZiplistObject(void) {
     return o;
 }
 
-
-/**
- * 对象的引用计数减 1
- * 当对象的引用计数为 0 时, 释放对象
- */
-void decrRefCount(robj *o) {
-
-    if (o->refcount <= 0) 
-        return ;
-        // redisPanic("decrRefCount against refcount <= 0");
-
-    // 释放对象
-    if (o->refcount == 1) {
-        switch(o->type) {
-        case REDIS_STRING: freeStringObject(o); break;
-        case REDIS_LIST: freeListObject(o); break;
-        case REDIS_SET: freeSetObject(o); break;
-        // case REDIS_ZSET: freeZsetObject(o); break;
-        // case REDIS_HASH: freeHashObject(o); break;
-        default: /*redisPanic("Unknown object type");*/ break;
-        }
-        zfree(o);
-    } else {
-        o->refcount--;
-    }
-}
-
-/**
- * 特定数据结构的释放函数包装
- */
-void decrRefCountVoid(void *o) {
-    decrRefCount(o);
-}
-
 /**
  * 释放字符串对象
  */
@@ -356,10 +322,88 @@ void freeSetObject(robj *o) {
 }
 
 /**
+ * 释放哈希对象
+ */
+void freeZsetObject(robj *o) {
+
+    zset *zs;
+
+    switch(o->encoding) {
+    case REDIS_ENCODING_SKIPLIST:
+        zs = o->ptr;
+        dictRelease(zs->dict);
+        zslFree(zs->zsl);
+        zfree(zs);
+        break;
+
+    case REDIS_ENCODING_ZIPLIST:
+        zfree(o->ptr);
+        break;
+
+    default:
+        // redisPanic("Unknown sorted set encoding");
+        break;
+    }
+
+}
+
+/**
+ * 释放有序集合对象
+ */
+void freeHashObject(robj *o) {
+    
+    switch(o->encoding) {
+    case REDIS_ENCODING_HT:
+        dictRelease((dict*)o->ptr);
+        break;
+
+    case REDIS_ENCODING_ZIPLIST:
+        zfree(o->ptr);
+        break;
+    default:
+        // redisPanic("Unknown hash encoding type");
+        break;
+    }
+}
+
+/**
  * 对象的引用计数加 1
  */
 void incrRefCount(robj *o) {
     o->refcount++;
+}
+
+/**
+ * 对象的引用计数减 1
+ * 当对象的引用计数为 0 时, 释放对象
+ */
+void decrRefCount(robj *o) {
+
+    if (o->refcount <= 0) 
+        return ;
+        // redisPanic("decrRefCount against refcount <= 0");
+
+    // 释放对象
+    if (o->refcount == 1) {
+        switch(o->type) {
+        case REDIS_STRING: freeStringObject(o); break;
+        case REDIS_LIST: freeListObject(o); break;
+        case REDIS_SET: freeSetObject(o); break;
+        case REDIS_ZSET: freeZsetObject(o); break;
+        case REDIS_HASH: freeHashObject(o); break;
+        default: /*redisPanic("Unknown object type");*/ break;
+        }
+        zfree(o);
+    } else {
+        o->refcount--;
+    }
+}
+
+/**
+ * 特定数据结构的释放函数包装
+ */
+void decrRefCountVoid(void *o) {
+    decrRefCount(o);
 }
 
 /**
@@ -375,8 +419,10 @@ robj *resetRefCount(robj *obj) {
 
 #include <assert.h>
 
-// 字符串对象：gcc -g zmalloc.c sds.c object.c
-// 字符串对象、列表对象：gcc -g util.c zmalloc.c sds.c adlist.c ziplist.c object.c
+// 字符串：gcc -g zmalloc.c sds.c object.c
+// 字符串、列表：gcc -g util.c zmalloc.c sds.c adlist.c ziplist.c object.c
+// 字符串、列表、集合、哈希：gcc -g util.c zmalloc.c sds.c adlist.c ziplist.c dict.c intset.c object.c
+// 字符串、列表、集合、哈希、有序集合：gcc -g util.c zmalloc.c sds.c adlist.c ziplist.c dict.c intset.c t_zset.c object.c
 int main () {
 
     robj *o,*dup;
@@ -464,7 +510,7 @@ int main () {
         printf("OK\n");
     }
 
-    // 创建一个 intset 的空集合对象
+    // 创建并释放 intset 的空集合对象
     printf("create and free intset set object: ");
     {
         o = createIntsetObject();
@@ -474,5 +520,33 @@ int main () {
         printf("OK\n");
     }
 
+    // 创建并释放一个 哈希对象
+    printf("create and free hash object: ");
+    {
+        o = createHashObject();
+        assert(o->type == REDIS_HASH);
+        assert(o->encoding == REDIS_ENCODING_HT);
+        freeHashObject(o);
+        printf("OK\n");
+    }
 
+    // 创建并释放 SKIPLIST 编码的有序集合对象
+    printf("create and free skiplist zset object: ");
+    {
+        o = createZsetObject();
+        assert(o->type == REDIS_ZSET);
+        assert(o->encoding == REDIS_ENCODING_SKIPLIST);
+        freeZsetObject(o);
+        printf("OK\n");
+    }
+    
+    // 创建并释放 ZIPLIST 编码的有序集合对象
+    printf("create and free ziplist zset object: ");
+    {
+        o = createZsetZiplistObject();
+        assert(o->type == REDIS_ZSET);
+        assert(o->encoding == REDIS_ENCODING_ZIPLIST);
+        freeZsetObject(o);
+        printf("OK\n");
+    }
 }

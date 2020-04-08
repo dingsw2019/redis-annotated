@@ -41,71 +41,7 @@
 #define REDIS_ENCODING_EMBSTR 8
 
 
-/*--------------------- 压缩列表 -----------------------*/
 
-#define ZSKIPLIST_MAXLEVEL 32
-#define ZSKIPLIST_P 0.25
-
-// 跳跃表节点 (level必须放在最后一个)
-typedef struct zskiplistNode 
-{
-    // 对象成员
-    sds ele;
-
-    // 分值
-    double score;
-
-    // 后退指针
-    struct zskiplistNode *backward;
-
-    // 层
-    struct zskiplistLevel {
-        // 前进指针
-        struct zskiplistNode *forward;
-        // 跨度
-        unsigned int span;
-    } level[];
-
-} zskiplistNode;
-
-// 跳跃表
-typedef struct zskiplist
-{
-    // 指向首尾节点的指针
-    struct zskiplistNode *header, *tail;
-    // 节点数量
-    unsigned long length;
-    // 最大层数的节点的层数
-    int level;
-} zskiplist;
-
-/**
- * 有序集合
- * 保存两种结构, 是为在不同场景下的操作, 取最优解
- */
-typedef struct zset {
-
-    // 字典, 键为成员, 值为分值
-    // 用于支持 O(1) 复杂度的按成员取分值操作
-    dict *dict;
-
-    // 跳跃表, 按分值排序成员
-    // 用于支持平均复杂度为 O(log N) 的按分值定位成员操作
-    // 以及范围操作
-    zskiplist *zsl;
-
-} zset;
-
-// 表示开区间/闭区间范围的结构
-typedef struct 
-{
-    // 最小值和最大值
-    double min, max;
-
-    // 指示最小值和最大值是否不包含在范围内
-    // 值为 1 表示不包含, 值为 0 表示包含
-    int minex, maxex;
-} zrangespec;
 
 // LRU 是Least Recently Used的缩写
 // 即最近最少使用，是一种常用的页面置换算法，选择最近最久未使用的页面予以淘汰。 
@@ -155,10 +91,120 @@ struct sharedObjectsStruct {
     *bulkhdr[REDIS_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
 };
 
+/*--------------------- 压缩列表 -----------------------*/
+
+#define ZSKIPLIST_MAXLEVEL 32
+#define ZSKIPLIST_P 0.25
+
+// // 跳跃表节点 (level必须放在最后一个)
+// typedef struct zskiplistNode 
+// {
+//     // 对象成员
+//     sds ele;
+
+//     // 分值
+//     double score;
+
+//     // 后退指针
+//     struct zskiplistNode *backward;
+
+//     // 层
+//     struct zskiplistLevel {
+//         // 前进指针
+//         struct zskiplistNode *forward;
+//         // 跨度
+//         unsigned int span;
+//     } level[];
+
+// } zskiplistNode;
+
+// // 跳跃表
+// typedef struct zskiplist
+// {
+//     // 指向首尾节点的指针
+//     struct zskiplistNode *header, *tail;
+//     // 节点数量
+//     unsigned long length;
+//     // 最大层数的节点的层数
+//     int level;
+// } zskiplist;
+
+/*
+ * 跳跃表节点
+ */
+typedef struct zskiplistNode {
+
+    // 成员对象
+    robj *obj;
+
+    // 分值
+    double score;
+
+    // 后退指针
+    struct zskiplistNode *backward;
+
+    // 层
+    struct zskiplistLevel {
+
+        // 前进指针
+        struct zskiplistNode *forward;
+
+        // 跨度
+        unsigned int span;
+
+    } level[];
+
+} zskiplistNode;
+
+/*
+ * 跳跃表
+ */
+typedef struct zskiplist {
+
+    // 表头节点和表尾节点
+    struct zskiplistNode *header, *tail;
+
+    // 表中节点的数量
+    unsigned long length;
+
+    // 表中层数最大的节点的层数
+    int level;
+
+} zskiplist;
+/**
+ * 有序集合
+ * 保存两种结构, 是为在不同场景下的操作, 取最优解
+ */
+typedef struct zset {
+
+    // 字典, 键为成员, 值为分值
+    // 用于支持 O(1) 复杂度的按成员取分值操作
+    dict *dict;
+
+    // 跳跃表, 按分值排序成员
+    // 用于支持平均复杂度为 O(log N) 的按分值定位成员操作
+    // 以及范围操作
+    zskiplist *zsl;
+
+} zset;
+
+// 表示开区间/闭区间范围的结构
+typedef struct 
+{
+    // 最小值和最大值
+    double min, max;
+
+    // 指示最小值和最大值是否不包含在范围内
+    // 值为 1 表示不包含, 值为 0 表示包含
+    int minex, maxex;
+} zrangespec;
+
 /*-----------------------------------------------------------------------------
  * Extern declarations
  *----------------------------------------------------------------------------*/
 extern struct sharedObjectsStruct shared;
+extern dictType setDictType;
+extern dictType zsetDictType;
 
 /* Redis 对象实现 */
 void decrRefCount(robj *o);
@@ -168,8 +214,8 @@ robj *resetRefCount(robj *obj);
 void freeStringObject(robj *o);
 void freeListObject(robj *o);
 void freeSetObject(robj *o);
-// void freeZsetObject(robj *o);
-// void freeHashObject(robj *o);
+void freeZsetObject(robj *o);
+void freeHashObject(robj *o);
 robj *createObject(int type, void *ptr);
 robj *createStringObject(char *ptr, size_t len);
 robj *createRawStringObject(char *ptr, size_t len);;
@@ -177,7 +223,14 @@ robj *createEmbeddeStringObject(char *ptr, size_t len);
 robj *dupStringObject(robj *o);
 
 robj *createStringObjectFromLongLong(long long value);
-// robj *createStringObjectFromLongDouble(long double value);
+robj *createStringObjectFromLongDouble(long double value);
+robj *createListObject(void);
+robj *createZiplistObject(void);
+robj *createSetObject(void);
+robj *createIntsetObject(void);
+robj *createHashObject(void);
+robj *createZsetObject(void);
+robj *createZsetZiplistObject(void);
 
 
 /* 压缩列表 API */
