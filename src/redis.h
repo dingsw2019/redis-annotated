@@ -5,6 +5,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <limits.h>
+#include <unistd.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <pthread.h>
+// #include <syslog.h>
+// #include <netinet/in.h>
+// #include <lua.h>
+#include <signal.h>
 
 #include "sds.h"
 #include "dict.h"
@@ -72,7 +81,8 @@ typedef struct redisObject {
 } robj;
 
 // todo 暂时简化
-#define LRU_CLOCK() 1000
+// #define LRU_CLOCK() ((1000/server.hz <= REDIS_LRU_CLOCK_RESOLUTION) ? server.lruclock : getLRUClock())
+#define LRU_CLOCK() (getLRUClock())
 
 
 // 通过复用来减少内存碎片, 以及减少操作耗时的共享对象
@@ -222,6 +232,7 @@ robj *createRawStringObject(char *ptr, size_t len);;
 robj *createEmbeddeStringObject(char *ptr, size_t len);
 robj *dupStringObject(robj *o);
 
+size_t stringObjectLen(robj *o);
 robj *createStringObjectFromLongLong(long long value);
 robj *createStringObjectFromLongDouble(long double value);
 robj *createListObject(void);
@@ -231,6 +242,11 @@ robj *createIntsetObject(void);
 robj *createHashObject(void);
 robj *createZsetObject(void);
 robj *createZsetZiplistObject(void);
+int compareStringObjects(robj *a, robj *b);
+int collateStringObjects(robj *a, robj *b);
+int equalStringObjects(robj *a, robj *b);
+
+#define sdsEncodedObject(objptr) (objptr->encoding == REDIS_ENCODING_RAW || objptr->encoding == REDIS_ENCODING_EMBSTR)
 
 
 /* 压缩列表 API */
@@ -249,4 +265,6 @@ void zsetConvert(robj *zobj, int encoding);
 unsigned long zslGetRank(zskiplist *zsl, double score, robj *o);
 
 
+/* Core function 核心函数 */
+unsigned int getLRUClock(void);
 #endif

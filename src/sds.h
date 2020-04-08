@@ -42,4 +42,9 @@ void sdsrange(sds s,int start,int end);
 sds sdscatsds(sds s, const sds t);
 sds sdsfromlonglong(long long value);
 
+
+sds sdsMakeRoomFor(sds s,size_t addlen);
+
+sds sdsRemoveFreeSpace(sds s);
+
 #endif

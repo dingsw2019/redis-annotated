@@ -107,7 +107,8 @@ void zslFree(zskiplist *zsl) {
 int zslRandomLevel(void) {
     int level = 1;
 
-    while ((random()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
+    // while ((random()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
+    while ((rand()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
         level += 1;
 
     return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
@@ -126,7 +127,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj) {
     unsigned int rank[ZSKIPLIST_MAXLEVEL];
     int i, level;
 
-    redisAssert(!isnan(score));
+    // redisAssert(!isnan(score));
 
     // 在各个层查找节点的插入位置
     // T_wrost = O(N^2), T_avg = O(N log N)
@@ -397,7 +398,7 @@ zskiplistNode *zslFirstInRange(zskiplist *zsl, zrangespec *range) {
 
     /* This is an inner range, so the next node cannot be NULL. */
     x = x->level[0].forward;
-    redisAssert(x != NULL);
+    // redisAssert(x != NULL);
 
     /* Check if score <= max. */
     // 检查节点是否符合范围的 max 项
@@ -436,7 +437,7 @@ zskiplistNode *zslLastInRange(zskiplist *zsl, zrangespec *range) {
     }
 
     /* This is an inner range, so this node cannot be NULL. */
-    redisAssert(x != NULL);
+    // redisAssert(x != NULL);
 
     /* Check if score >= min. */
     // 检查节点是否符合范围的 min 项

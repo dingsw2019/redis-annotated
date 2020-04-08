@@ -162,6 +162,10 @@ typedef struct dictIterator {
 
 // 计算给定键的哈希值
 #define dictHashKey(d,key) (d)->type->hashFunction(key)
+// 返回节点的键
+#define dictGetKey(he) ((he)->key)
+// 返回节点的值
+#define dictGetVal(he) ((he)->v.val)
 // 返回字典已用的节点数
 #define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
 // 查看字典是否正在 rehash
