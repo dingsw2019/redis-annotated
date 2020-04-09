@@ -49,15 +49,33 @@
 #define REDIS_ENCODING_SKIPLIST 7
 #define REDIS_ENCODING_EMBSTR 8
 
-
-
-
 // LRU 是Least Recently Used的缩写
 // 即最近最少使用，是一种常用的页面置换算法，选择最近最久未使用的页面予以淘汰。 
 #define REDIS_LRU_BITS 24
 #define REDIS_LRU_CLOCK_MAX ((1<<REDIS_LRU_BITS)-1) /* robj->lru 的最大值 */
 #define REDIS_LRU_CLOCK_RESOLUTION 1000
 #define REDIS_SHARED_BULKHDR_LEN 32
+
+// 过期时间的单位, 秒或毫秒
+#define UNIT_SECONDS 0
+#define UNIT_MILLISECONDS 1
+
+/* Keyspace changes notification classes. Every class is associated with a
+ * character for configuration purposes. 
+ * 密钥变更通知类常量, 每个常量对应一个字符
+ */
+#define REDIS_NOTIFY_KEYSPACE (1<<0)    /* K */
+#define REDIS_NOTIFY_KEYEVENT (1<<1)    /* E */
+#define REDIS_NOTIFY_GENERIC (1<<2)     /* g */
+#define REDIS_NOTIFY_STRING (1<<3)      /* $ */
+#define REDIS_NOTIFY_LIST (1<<4)        /* l */
+#define REDIS_NOTIFY_SET (1<<5)         /* s */
+#define REDIS_NOTIFY_HASH (1<<6)        /* h */
+#define REDIS_NOTIFY_ZSET (1<<7)        /* z */
+#define REDIS_NOTIFY_EXPIRED (1<<8)     /* x */
+#define REDIS_NOTIFY_EVICTED (1<<9)     /* e */
+#define REDIS_NOTIFY_ALL (REDIS_NOTIFY_GENERIC | REDIS_NOTIFY_STRING | REDIS_NOTIFY_LIST | REDIS_NOTIFY_SET | REDIS_NOTIFY_HASH | REDIS_NOTIFY_ZSET | REDIS_NOTIFY_EXPIRED | REDIS_NOTIFY_EVICTED)      /* A */
+
 
 // redis对象
 typedef struct redisObject {
@@ -84,6 +102,29 @@ typedef struct redisObject {
 // #define LRU_CLOCK() ((1000/server.hz <= REDIS_LRU_CLOCK_RESOLUTION) ? server.lruclock : getLRUClock())
 #define LRU_CLOCK() (getLRUClock())
 
+typedef struct redisDb {
+
+    dict *dict;
+
+    // 数据库号码
+    int id;
+} redisDb;
+
+typedef struct redisClient {
+
+    // 当前正在使用的数据库
+    redisDb *db;
+    
+    // 当前正在使用的数据库的 id
+    int dictid;
+
+    // 参数数量
+    int argc;
+
+    // 参数对象数组
+    robj **argv;
+
+} redisClient;
 
 // 通过复用来减少内存碎片, 以及减少操作耗时的共享对象
 struct sharedObjectsStruct {
@@ -231,7 +272,9 @@ robj *createStringObject(char *ptr, size_t len);
 robj *createRawStringObject(char *ptr, size_t len);;
 robj *createEmbeddeStringObject(char *ptr, size_t len);
 robj *dupStringObject(robj *o);
-
+int isObjectRepresentableAsLongLong(robj *o, long long *llongval);
+robj *tryObjectEncoding(robj *o);
+robj *getDecodedObject(robj *o);
 size_t stringObjectLen(robj *o);
 robj *createStringObjectFromLongLong(long long value);
 robj *createStringObjectFromLongDouble(long double value);
@@ -242,6 +285,14 @@ robj *createIntsetObject(void);
 robj *createHashObject(void);
 robj *createZsetObject(void);
 robj *createZsetZiplistObject(void);
+int getLongFromObjectOrReply(redisClient *c, robj *o, long *target, const char *msg);
+int checkType(redisClient *c, robj *o, int type);
+int getLongLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg);
+int getDoubleFromObjectOrReply(redisClient *c, robj *o, double *target, const char *msg);
+int getLongLongFromObject(robj *o, long long *target);
+int getLongDoubleFromObject(robj *o, long double *target);
+int getLongDoubleFromObjectOrReply(redisClient *c, robj *o, long double *target, const char *msg);
+char *strEncoding(int encoding);
 int compareStringObjects(robj *a, robj *b);
 int collateStringObjects(robj *a, robj *b);
 int equalStringObjects(robj *a, robj *b);
@@ -267,4 +318,25 @@ unsigned long zslGetRank(zskiplist *zsl, double score, robj *o);
 
 /* Core function 核心函数 */
 unsigned int getLRUClock(void);
+
+
+/* networking.c -- Networking and Client related operations 
+ * 网络模块相关的函数
+ */
+void addReply(redisClient *c, robj *obj);
+void addReplyError(redisClient *c, char *err);
+
+/* db.c -- Keyspace access API 
+ * 数据库操作函数
+ */
+void setExpire(redisDb *db, robj *key, long long when);
+robj *lookupKeyWrite(redisDb *db, robj *key);
+void setKey(redisDb *db, robj *key, robj *val);
+
+
+/* Keyspace events notification */
+void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid);
+int keyspaceEventsStringToFlags(char *classes);
+sds keyspaceEventsFlagsToString(int flags);
+
 #endif

@@ -433,21 +433,7 @@ robj *resetRefCount(robj *obj) {
     return obj;
 }
 
-/**
- * todo redisClient 还没看, 暂不开放
- * 检查对象 o 的类型是否和 type 相同
- * 相同返回 0
- * 不同返回 1, 并先客户端回复一个错误
- */
-// int checkType(redisClient *c, robj *o, int type) {
-    
-//     if (o->type != type) {
-//         addReply(c,shared.wrongtypeerr);
-//         return 1;
-//     }
 
-//     return 0;
-// }
 
 /*--------------------------------------- Redis字符串对象值的相关函数 -----------------------------------------*/
 
@@ -778,7 +764,8 @@ int getLongLongFromObject(robj *o, long long *target) {
     } else {
 
         // 确保对象为 REDIS_STRING 类型
-        redisAssertWithInfo(NULL,o,o->type == REDIS_STRING);
+        // redisAssertWithInfo(NULL,o,o->type == REDIS_STRING);
+
         if (sdsEncodedObject(o)) {
             errno = 0;
             // T = O(N)
@@ -791,7 +778,7 @@ int getLongLongFromObject(robj *o, long long *target) {
             // 直接将它的值保存到 value 中
             value = (long)o->ptr;
         } else {
-            redisPanic("Unknown string encoding");
+            // redisPanic("Unknown string encoding");
         }
     }
 
@@ -857,6 +844,23 @@ int getLongLongFromObject(robj *o, long long *target) {
 
 //     *target = value;
 //     return REDIS_OK;
+// }
+
+/*--------------------------------------- Redis对象类型 API -----------------------------------------*/
+/**
+ * todo redisClient 还没看, 暂不开放
+ * 检查对象 o 的类型是否和 type 相同
+ * 相同返回 0
+ * 不同返回 1, 并先客户端回复一个错误
+ */
+// int checkType(redisClient *c, robj *o, int type) {
+    
+//     if (o->type != type) {
+//         addReply(c,shared.wrongtypeerr);
+//         return 1;
+//     }
+
+//     return 0;
 // }
 
 /*--------------------------------------- OBJECT 命令函数 -----------------------------------------*/
