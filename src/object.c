@@ -672,23 +672,23 @@ int getDoubleFromObject(robj *o, double *target) {
  * - 提取失败, 返回 msg 给客户端, 函数返回 REDIS_ERR
  * - 提取成功, 将提取值存储在 *target 中, 函数返回 REDIS_OK
  */
-// int getDoubleFromObjectOrReply(redisClient *c, robj *o, double *target, const char *msg) {
-//     double value;
+int getDoubleFromObjectOrReply(redisClient *c, robj *o, double *target, const char *msg) {
+    double value;
 
-//     // 提取失败
-//     if (getDoubleFromObject(o, &value) != REDIS_OK) {
+    // 提取失败
+    if (getDoubleFromObject(o, &value) != REDIS_OK) {
 
-//         if (msg != NULL) {
-//             addReplyError(c, (char*)msg);
-//         } else {
-//             addReplyError(c, "value is not a valid float");
-//         }
-//         return REDIS_ERR;
-//     }
+        if (msg != NULL) {
+            addReplyError(c, (char*)msg);
+        } else {
+            addReplyError(c, "value is not a valid float");
+        }
+        return REDIS_ERR;
+    }
 
-//     *target = value;
-//     return REDIS_OK;
-// }
+    *target = value;
+    return REDIS_OK;
+}
 
 /**
  * 尝试从字符串对象的值转换成 long double 型整数
@@ -732,21 +732,21 @@ int getLongDoubleFromObject(robj *o, long double *target) {
  * - 提取失败, 返回 msg 给客户端, 函数返回 REDIS_ERR
  * - 提取成功, 将提取值存储在 *target 中, 函数返回 REDIS_OK
  */
-// int getLongDoubleFromObjectOrReply(redisClient *c, robj *o, long double *target, const char *msg) {
-//     long double value;
+int getLongDoubleFromObjectOrReply(redisClient *c, robj *o, long double *target, const char *msg) {
+    long double value;
 
-//     if (getLongDoubleFromObject(o, &value) != REDIS_OK) {
-//         if (msg != NULL) {
-//             addReplyError(c, (char*)msg);
-//         } else {
-//             addReplyError(c, "value is not a valid float");
-//         }
-//         return REDIS_ERR;
-//     }
+    if (getLongDoubleFromObject(o, &value) != REDIS_OK) {
+        if (msg != NULL) {
+            addReplyError(c, (char*)msg);
+        } else {
+            addReplyError(c, "value is not a valid float");
+        }
+        return REDIS_ERR;
+    }
 
-//     *target = value;
-//     return REDIS_OK;
-// }
+    *target = value;
+    return REDIS_OK;
+}
 
 
 /**
@@ -799,24 +799,24 @@ int getLongLongFromObject(robj *o, long long *target) {
  *
  * T = O(N)
  */
-// int getLongLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg) {
+int getLongLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg) {
 
-//     long long value;
+    long long value;
 
-//     // T = O(N)
-//     if (getLongLongFromObject(o, &value) != REDIS_OK) {
-//         if (msg != NULL) {
-//             addReplyError(c,(char*)msg);
-//         } else {
-//             addReplyError(c,"value is not an integer or out of range");
-//         }
-//         return REDIS_ERR;
-//     }
+    // T = O(N)
+    if (getLongLongFromObject(o, &value) != REDIS_OK) {
+        if (msg != NULL) {
+            addReplyError(c,(char*)msg);
+        } else {
+            addReplyError(c,"value is not an integer or out of range");
+        }
+        return REDIS_ERR;
+    }
 
-//     *target = value;
+    *target = value;
 
-//     return REDIS_OK;
-// }
+    return REDIS_OK;
+}
 
 /*
  * 尝试从对象 o 中取出 long 类型值，
@@ -826,25 +826,25 @@ int getLongLongFromObject(robj *o, long long *target) {
  * 如果取出/转换成功的话，返回 REDIS_OK 。
  * 否则，返回 REDIS_ERR ，并向客户端发送一条 msg 出错回复。
  */
-// int getLongFromObjectOrReply(redisClient *c, robj *o, long *target, const char *msg) {
-//     long long value;
+int getLongFromObjectOrReply(redisClient *c, robj *o, long *target, const char *msg) {
+    long long value;
 
-//     // 先尝试以 long long 类型取出值
-//     if (getLongLongFromObjectOrReply(c, o, &value, msg) != REDIS_OK) return REDIS_ERR;
+    // 先尝试以 long long 类型取出值
+    if (getLongLongFromObjectOrReply(c, o, &value, msg) != REDIS_OK) return REDIS_ERR;
 
-//     // 然后检查值是否在 long 类型的范围之内
-//     if (value < LONG_MIN || value > LONG_MAX) {
-//         if (msg != NULL) {
-//             addReplyError(c,(char*)msg);
-//         } else {
-//             addReplyError(c,"value is out of range");
-//         }
-//         return REDIS_ERR;
-//     }
+    // 然后检查值是否在 long 类型的范围之内
+    if (value < LONG_MIN || value > LONG_MAX) {
+        if (msg != NULL) {
+            addReplyError(c,(char*)msg);
+        } else {
+            addReplyError(c,"value is out of range");
+        }
+        return REDIS_ERR;
+    }
 
-//     *target = value;
-//     return REDIS_OK;
-// }
+    *target = value;
+    return REDIS_OK;
+}
 
 /*--------------------------------------- Redis对象类型 API -----------------------------------------*/
 /**
@@ -853,15 +853,15 @@ int getLongLongFromObject(robj *o, long long *target) {
  * 相同返回 0
  * 不同返回 1, 并先客户端回复一个错误
  */
-// int checkType(redisClient *c, robj *o, int type) {
+int checkType(redisClient *c, robj *o, int type) {
     
-//     if (o->type != type) {
-//         addReply(c,shared.wrongtypeerr);
-//         return 1;
-//     }
+    if (o->type != type) {
+        addReply(c,shared.wrongtypeerr);
+        return 1;
+    }
 
-//     return 0;
-// }
+    return 0;
+}
 
 /*--------------------------------------- OBJECT 命令函数 -----------------------------------------*/
 
@@ -899,54 +899,54 @@ unsigned long long estimateObjectIdleTime(robj *o) {
 /**
  * OBJECT 命令的辅助函数, 在不修改 LRU 时间的情况下, 尝试获取 key 对象
  */
-// robj *objectCommandLookup(redisClient *c, robj *key) {
-//     dictEntry *de;
+robj *objectCommandLookup(redisClient *c, robj *key) {
+    dictEntry *de;
 
-//     if ((de = dictFind(c->db->dict, key->ptr)) == NULL) return NULL;
+    if ((de = dictFind(c->db->dict, key->ptr)) == NULL) return NULL;
 
-//     return (robj*)dictGetVal(de);
-// }
+    return (robj*)dictGetVal(de);
+}
 
 /**
  * 在不修改 LRU 时间的情况下, 尝试获取 key 对象
  * 如果对象不存在, 先客户端发送 reply
  */
-// robj *objectCommandLookupOrReply(redisClient *c, robj *key, robj *reply) {
+robj *objectCommandLookupOrReply(redisClient *c, robj *key, robj *reply) {
 
-//     robj *o = objectCommandLookup(c, key);
-//     if (!o) addReply(c, reply);
-//     return o;
-// }
+    robj *o = objectCommandLookup(c, key);
+    if (!o) addReply(c, reply);
+    return o;
+}
 
 /**
  * 处理 OBJECT 命令
  */
-// void objectCommand(redisClient *c) {
+void objectCommand(redisClient *c) {
 
-//     robj *o;
+    robj *o;
 
-//     // 返回指定 key 的引用计数的值
-//     if (strcasecmp(c->argv[1]->ptr, "refcount") && c->argc == 3) {
-//         if ((o = objectCommandLookupOrReply(c, c->argv[2], shared.nullbulk)) == NULL)
-//             return;
-//         addReplyLongLong(c, o->refcount);
+    // 返回指定 key 的引用计数的值
+    if (strcasecmp(c->argv[1]->ptr, "refcount") && c->argc == 3) {
+        if ((o = objectCommandLookupOrReply(c, c->argv[2], shared.nullbulk)) == NULL)
+            return;
+        addReplyLongLong(c, o->refcount);
 
-//     // 返回指定 key 的编码
-//     } else if (strcasecmp(c->argv[1]->ptr, "encoding") && c->argc == 3) {
-//         if ((o = objectCommandLookupOrReply(c, c->argv[2], shared.nullbulk)) == NULL)
-//             return;
-//         addReplyBulkCString(c, strEncoding(o->encoding));
+    // 返回指定 key 的编码
+    } else if (strcasecmp(c->argv[1]->ptr, "encoding") && c->argc == 3) {
+        if ((o = objectCommandLookupOrReply(c, c->argv[2], shared.nullbulk)) == NULL)
+            return;
+        addReplyBulkCString(c, strEncoding(o->encoding));
 
-//     // 返回指定 key 的空间时间
-//     } else if (strcasecmp(c->argv[1]->ptr, "idletime") && c->argc == 3) {
-//         if ((o = objectCommandLookupOrReply(c, c->argv[2], shared.nullbulk)) == NULL)
-//             return;
-//         addReplyLongLong(c, estimateObjectIdleTime(o)/1000);
-//     } else {
-//         addReplyError(c,"Syntax error. Try OBJECT (refcount|encoding|idletime)");
-//     }
+    // 返回指定 key 的空间时间
+    } else if (strcasecmp(c->argv[1]->ptr, "idletime") && c->argc == 3) {
+        if ((o = objectCommandLookupOrReply(c, c->argv[2], shared.nullbulk)) == NULL)
+            return;
+        addReplyLongLong(c, estimateObjectIdleTime(o)/1000);
+    } else {
+        addReplyError(c,"Syntax error. Try OBJECT (refcount|encoding|idletime)");
+    }
 
-// }
+}
 
 #include <assert.h>
 

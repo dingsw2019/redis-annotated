@@ -30,7 +30,7 @@ static inline size_t sdsavail(const sds s){
     return sh->free;
 }
 
-
+sds sdscatlen(sds s,const void *t,size_t len);
 sds sdsnewlen(const void *init, size_t initlen);
 sds sdsnew(const char *init);
 int sdscmp(const sds s1, const sds s2);

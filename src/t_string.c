@@ -60,6 +60,9 @@ void setGenericCommand(redisClient *c, int flags, robj *key, robj *val, robj *ex
     // 写入 value
     setKey(c->db, key, val);
 
+    // 将数据库设为脏
+    server.dirty++;
+
     // 写入过期时间
     if (expire) setExpire(c->db, key, mstime()+milliseconds);
 
@@ -145,4 +148,343 @@ void setexCommand(redisClient *c) {
 void psetexCommand(redisClient *c) {
     c->argv[3] = tryObjectEncoding(c->argv[3]);
     setGenericCommand(c, REDIS_SET_NO_FLAGS, c->argv[1], c->argv[3], c->argv[2], UNIT_MILLISECONDS, NULL, NULL);
+}
+
+/**
+ * 获取值对象的标准通用方法
+ * - 获取成功, 向客户端发送值对象, 返回 REDIS_OK
+ * - 获取失败, 返回 REDIS_ERR
+ */
+int getGenericCommand(redisClient *c) {
+    robj *o;
+
+    // 尝试获取值对象, 获取失败向客户端发送nil
+    if ((o = lookupKeyReadOrReply(c, c->argv[1],shared.nullbulk)) == NULL)
+        return REDIS_OK;
+
+    // 值对象的类型是否为字符串
+    if (o->type != REDIS_STRING) {
+        addReply(c, shared.wrongtypeerr);
+        return REDIS_ERR;
+    } else {
+        // 向客户端发送值对象
+        addReplyBulk(c, o);
+        return REDIS_OK;
+    }
+}
+
+void getCommand(redisClient *c) {
+    getGenericCommand(c);
+}
+
+/**
+ * GETSET mycounter "0"
+ * 
+ * 取出旧的值对象并发送给客户端
+ * 将新值对象写入
+ */
+void getsetCommand(redisClient *c) {
+
+    // 获取旧的值对象, 并发送给客户端
+    if (getGenericCommand(c) == REDIS_ERR) return;
+
+    // 压缩新的值对象
+    c->argv[2] = tryObjectEncoding(c->argv[2]);
+
+    // 设置新的值对象
+    setKey(c->db, c->argv[1], c->argv[2]);
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "set", c->argv[1], c->db->id);
+
+    // 将服务器设为脏
+    server.dirty++;
+}
+
+/**
+ * 获取多个 key 的值对象
+ */
+void mgetCommand(redisClient *c) {
+
+    int j;
+
+    // 要返回的值对象数量
+    addReplyMultiBulkLen(c, c->argc-1);
+
+    // 添加值对象
+    for (j=1; j<c->argc; j++) {
+        // 获取 key 的值对象
+        robj *o = lookupKeyRead(c->db, c->argv[j]);
+        // 值对象不存在, 向客户端发送空回复
+        if (o == NULL) {
+            addReply(c, shared.nullbulk);
+
+        // 值对象存在
+        } else {
+
+            // 值对象不是字符串对象, 向客户端发送"类型错误"的回复
+            if (o->type != REDIS_STRING) {
+                addReply(c, shared.nullbulk);
+
+            // 向客户端发送值对象
+            } else {
+                addReplyBulk(c, o);
+            }
+        }
+    }
+}
+
+/**
+ * 批量添加字符串的通用统一函数
+ * nx 为 1, 是批量 setnx 操作
+ */
+void msetGenericCommand(redisClient *c, int nx) {
+    int j, busykeys = 0;
+
+    // 如果参数数量能被 2 整除, 说明参数缺失
+    if ((c->argc % 2) == 0) {
+        addReplyError(c, "wrong number of arguments for MSET");
+        return;
+    }
+
+    // 批量 setnx 操作, 只要有一个 key 存在, 不继续执行
+    for (j = 1; j < c->argc; j += 2) {
+
+        // 所有 key 查找是否存在值对象
+        // 记录存在的值对象数量
+        if (lookupKeyWrite(c->db, c->argv[j]) != NULL) {
+            busykeys++;
+        }
+
+        // 存在值对象, 发送空白回复, 并放弃执行
+        if (busykeys) {
+            addReply(c, shared.czero);
+            return;
+        }
+    }
+
+
+    // 设置键值对
+    for (j=1; j<c->argc; j+=2) {
+
+        // 压缩值的空间
+        c->argv[j+1] = tryObjectEncoding(c->argv[j+1]);
+
+        // 写入值
+        // c->argv[j] 为键, c->argv[j+1] 为值
+        setKey(c->db, c->argv[j], c->argv[j+1]);
+
+        // 发送事件通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "set", c->argv[j], c->db->id);
+    }
+
+    // 服务器设为脏, 更新变更 key 数量
+    server.dirty += (c->argc-1)/2;
+
+    // 设置成功
+    // MSET 返回 OK, 而 MSETNX 返回 1
+    addReply(c, nx ? shared.cone : shared.ok);
+}
+
+void msetCommand(redisClient *c) {
+    return msetGenericCommand(c, 0);
+}
+
+void msetnxCommand(redisClient *c) {
+    return msetGenericCommand(c, 1);
+}
+
+/**
+ * 增加减少值的通用方法
+ */
+void incrDecrCommand(redisClient *c, long long incr) {
+    robj *o, *new;
+    long long value, oldvalue;
+
+    // 获取 key 的值对象
+    o = lookupKeyWrite(c->db, c->argv[1]);
+
+    // 检查值对象的类型是否为 字符串
+    if (o != NULL && checkType(c, o, REDIS_STRING)) return;
+
+    // 取出值对象的数值, 保存到 value 中
+    if (getLongLongFromObjectOrReply(c, o, &value, NULL) != REDIS_OK) return;
+
+    oldvalue = value;
+    // 检查加减操作是否会溢出
+    // 溢出向客户端回复错误, 并终止操作
+    if ((incr < 0 && oldvalue < 0 && incr < (LLONG_MIN-oldvalue)) ||
+         incr > 0 && oldvalue > 0 && incr > (LLONG_MAX-oldvalue)) {
+        addReplyError(c, "increment or decrement would overflow");
+        return;
+    }
+
+    // 更新数值
+    value += incr;
+    // 创建一个新的值对象
+    new = createStringObjectFromLongLong(value);
+    // 添加或覆盖 key 的值对象
+    if (o) {
+        dbOverwrite(c->db, c->argv[1], new);
+    } else {
+        dbAdd(c->db, c->argv[1], new);
+    }
+
+    // 向数据库发送键被修改的信号
+    signalModifiedKey(c->db, c->argv[1]);
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "incrby", c->argv[1], c->db->id);
+
+    // 将服务器设为脏
+    server.dirty++;
+
+    // 回复客户端
+    addReply(c, shared.colon);
+    addReply(c, new);
+    addReply(c, shared.crlf);
+}
+
+void incrCommand(redisClient *c) {
+    incrDecrCommand(c, 1);
+}
+
+void decrCommand(redisClient *c) {
+    incrDecrCommand(c, -1);
+}
+
+void incrbyCommand(redisClient *c) {
+    long long incr;
+
+    if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != REDIS_OK) return;
+    incrDecrCommand(c, incr);
+}
+
+void decrbyCommand(redisClient *c) {
+    long long incr;
+
+    if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != REDIS_OK) return;
+    incrDecrCommand(c, -incr);
+}
+
+/**
+ * 浮点类型值增加
+ */
+void incrbyfloatCommand(redisClient *c) {
+    long double value, incr;
+    robj *o, *new, *aux;
+
+    // 获取 key 的值对象
+    o = lookupKeyWrite(c->db, c->argv[1]);
+
+    // 判断值对象是否为字符串类型
+    if (o != NULL && !checkType(c, o, REDIS_STRING)) return;
+
+    // 提取值对象的浮点值, 存入 value 中
+    if (getLongDoubleFromObjectOrReply(c, o, &value, NULL) != REDIS_OK ||
+        getLongDoubleFromObjectOrReply(c, c->argv[2], &incr, NULL) != REDIS_OK)
+        return;
+
+    // 添加增量值
+    value += incr;
+    // incr 是数值同时未溢出
+    if (isnan(value) || isinf(value)) {
+        addReplyError(c, "increment would produce NaN or Infinity");
+        return;
+    }
+
+    // 写入或覆盖值对象的值
+    new = createStringObjectFromLongDouble(value);
+    if (o) {
+        dbOverwrite(c->db, c->argv[1], new);
+    } else {
+        dbAdd(c->db, c->argv[1], new);
+    }
+
+    // 通知键修改
+    signalModifiedKey(c->db, c->argv[1]);
+
+    // 发出事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "incrbyfloat", c->argv[1], c->db->id);
+
+    // 服务器设为脏
+    server.dirty++;
+
+    // 回复客户端
+    addReplyBulk(c, new);
+
+    // todo 暂时不知道干啥的
+    // 在传播 INCRBYFLOAT 命令时, 总是用 SET 命令来替换 INCRBYFLOAT 命令
+    // 从而防止因为不同的浮点精度和格式化造成 AOF 重启时的数据不一致
+    aux = createStringObject("SET", 3);
+    rewriteClientCommandArgument(c, 0, aux);
+    decrRefCount(aux);
+    rewriteClientCommandArgument(c, 2, aux);
+}
+
+void appendCommand(redisClient *c) {
+    robj *o, *append;
+    size_t totlen;
+
+    // 获取 key 的值对象
+    o = lookupKeyWrite(c->db, c->argv[1]);
+
+    // 值对象不存在
+    if (o == NULL) {
+
+        // 压缩值的空闲内存
+        c->argv[2] = tryObjectEncoding(c->argv[2]);
+        // 将值对象添加到数据库
+        dbAdd(c->db, c->argv[1], c->argv[2]);
+        // 更新值对象的引用计数
+        incrRefCount(c->argv[2]);
+        // 记录值的长度
+        totlen = stringObjectLen(c->argv[2]);
+
+    // 值对象存在
+    } else {
+
+        // 检查值对象的类型是否为字符串
+        if (checkType(c, o, REDIS_STRING)) return;
+
+        append = c->argv[2];
+        // 计算追加字符串后的长度
+        totlen = stringObjectLen(o) + sdslen(append->ptr);
+        // 新字符串长度是否超过最大限制
+        if (checkStringLength(c, totlen) != REDIS_OK) 
+            return;
+
+        // 执行数据库层的追加
+        o = dbUnshareStringValue(c->db, c->argv[1], o);
+
+        // 值对象的内容 sds 追加
+        sdscatlen(o->ptr, append->ptr, sdslen(append->ptr));
+
+        // 计算新字符串长度
+        totlen = sdslen(o->ptr);
+    }
+
+    // 向数据库发送键修改的信号
+    signalModifiedKey(c->db, c->argv[1]);
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "append", c->argv[1], c->db->id);
+
+    // 将服务器设置为脏
+    server.dirty++;
+
+    // 回复客户端, 追加字符串后的长度
+    addReplyLongLong(c, totlen);
+}
+
+// 返回值的长度
+void strlenCommand(redisClient *c) {
+    robj *o;
+
+    // 获取 key 的值对象
+    if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.czero)) == NULL ||
+        checkType(c, o, REDIS_STRING)) return;
+
+    // 将字符串的长度, 返回给客户端
+    addReplyLongLong(c, stringObjectLen(o));
 }

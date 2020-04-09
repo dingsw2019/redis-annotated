@@ -126,6 +126,15 @@ typedef struct redisClient {
 
 } redisClient;
 
+struct redisServer {
+
+    // 每秒调用的次数
+    int hz;
+
+    // 最近一次 SAVE 后, 数据库被修改的次数
+    long long dirty;
+};
+
 // 通过复用来减少内存碎片, 以及减少操作耗时的共享对象
 struct sharedObjectsStruct {
     robj *crlf, *ok, *err, *emptybulk, *czero, *cone, *cnegone, *pong, *space,
@@ -253,6 +262,7 @@ typedef struct
 /*-----------------------------------------------------------------------------
  * Extern declarations
  *----------------------------------------------------------------------------*/
+extern struct redisServer server;
 extern struct sharedObjectsStruct shared;
 extern dictType setDictType;
 extern dictType zsetDictType;
@@ -323,15 +333,30 @@ unsigned int getLRUClock(void);
 /* networking.c -- Networking and Client related operations 
  * 网络模块相关的函数
  */
+void addReplyBulk(redisClient *c, robj *obj);
 void addReply(redisClient *c, robj *obj);
 void addReplyError(redisClient *c, char *err);
+void addReplyMultiBulkLen(redisClient *c, long length);
+
+void addReplyLongLong(redisClient *c, long long ll);
+
+void rewriteClientCommandArgument(redisClient *c, int i, robj *newval);
 
 /* db.c -- Keyspace access API 
  * 数据库操作函数
  */
 void setExpire(redisDb *db, robj *key, long long when);
+robj *lookupKeyRead(redisDb *db, robj *key);
 robj *lookupKeyWrite(redisDb *db, robj *key);
+robj *lookupKeyReadOrReply(redisClient *c, robj *key, robj *reply);
+void dbAdd(redisDb *db, robj *key, robj *val);
+void dbOverwrite(redisDb *db, robj *key, robj *val);
 void setKey(redisDb *db, robj *key, robj *val);
+
+robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o);
+
+void signalModifiedKey(redisDb *db, robj *key);
+void signalFlushedDb(int dbid);
 
 
 /* Keyspace events notification */
