@@ -30,6 +30,13 @@ void addReplyBulk(redisClient *c, robj *obj) {
 }
 
 /**
+ * 返回一个 C 缓冲区作为回复
+ */
+void addReplyBulkCBuffer(redisClient *c, void *p, size_t len) {
+
+}
+
+/**
  * 回复客户端一个整数
  * 格式：10086\r\n
  */

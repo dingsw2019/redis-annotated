@@ -338,6 +338,8 @@ void addReply(redisClient *c, robj *obj);
 void addReplyError(redisClient *c, char *err);
 void addReplyMultiBulkLen(redisClient *c, long length);
 
+void addReplyBulkCBuffer(redisClient *c, void *p, size_t len);
+
 void addReplyLongLong(redisClient *c, long long ll);
 
 void rewriteClientCommandArgument(redisClient *c, int i, robj *newval);

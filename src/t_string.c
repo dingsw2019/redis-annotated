@@ -1,3 +1,28 @@
+/**
+ * 
+ * 1. 整体结构
+ *     string 命令 -> t_string.c <=> db
+ *                       |
+ *                       |=> network
+ * 
+ *     1. 用户输入字符串的命令,
+ *     2. t_string.c 根据各命令的规则, 从 db 获取
+ *     3. 某个 key 的 val, 然后处理修改 val, 
+ *     4. 最后通过 networking.c 将处理后的结果发送给客户端
+ * 
+ * 2. 命令以空格拆分, 存放在 c->argv 数组中
+ *      例如：SET key1 "Hello"
+ *          - argv[0] SET
+ *          - argv[1] key1
+ *          - argb[2] Hello
+ * 
+ * 3. 功能模块
+ *    - t_string.c, 处理字符串处理的逻辑
+ *    - networking.c, 通信模块, 负责给客户端发送数据
+ *    - db.c, 将 key 与 val 关联起来, 负责读取 val
+ *    - object.c, 负责Redis对象的存取
+ */
+
 #include "redis.h"
 #include <math.h>
 
@@ -285,6 +310,51 @@ void setrangeCommand(redisClient *c) {
 
     // 设置成功, 向客户端发送新的字符串长度
     addReplyLongLong(c, sdslen(o->ptr));
+}
+
+void getrangeCommand(redisClient *c) {
+    long start, end;
+    robj *o;
+    char *str, llbuf[32];
+    size_t strlen;
+
+    // 取出 start, end
+    if (getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != REDIS_OK)
+        return;
+    if (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != REDIS_OK)
+        return;
+
+    // key 的值对象不存在或类型错误, 回复客户端错误
+    if ((o =lookupKeyReadOrReply(c, c->argv[1], shared.emptybulk)) == NULL || 
+         checkType(c, o, REDIS_STRING)) return;
+
+
+    // 读取字符串, 字符串长度
+    // 整数编码, 将整数转为字符串
+    if (o->encoding == REDIS_ENCODING_INT) {
+        str = llbuf;
+        strlen = ll2string(llbuf,sizeof(llbuf),(long)o->ptr);
+    } else {
+        str = o->ptr;
+        strlen = sdslen(o->ptr);
+    }
+
+    // 负数索引转换成正数索引
+    // 如果 start, end 超范围, 设置成各自的最大值
+    if (start < 0) start = strlen+start;
+    if (end < 0) end = strlen+end;
+    if (start < 0) start = 0;
+    if (end < 0) end = 0;
+    if ((unsigned)end >= strlen) end = strlen-1;
+
+    // 回复客户端截取的字符串
+    if (start > end) {
+        // 无交集, 返回空字符串
+        addReply(c, shared.emptybulk);
+    } else {
+        // 返回截取的字符串
+        addReplyBulkCBuffer(c, (char*)str+strlen, end-start+1);
+    }
 }
 
 /**
