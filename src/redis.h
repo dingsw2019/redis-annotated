@@ -49,6 +49,15 @@
 #define REDIS_ENCODING_SKIPLIST 7
 #define REDIS_ENCODING_EMBSTR 8
 
+/* 双端链表的方向 */
+#define REDIS_HEAD 0
+#define REDIS_TAIL 1
+
+// todo 待完善
+#define redisAssertWithInfo(_c,_o,_e) _exit(1)
+#define redisAssert(_e) _exit(1)
+#define redisPanic(_e) _exit(1)
+
 // LRU 是Least Recently Used的缩写
 // 即最近最少使用，是一种常用的页面置换算法，选择最近最久未使用的页面予以淘汰。 
 #define REDIS_LRU_BITS 24
@@ -98,6 +107,44 @@ typedef struct redisObject {
     void *ptr;
 } robj;
 
+/**
+ * 列表迭代器对象
+ */
+typedef struct {
+
+    // 列表对象
+    robj *subject;
+
+    // 对象使用的编码
+    unsigned char encoding;
+
+    // 迭代的方向
+    unsigned char direction;
+
+    // ziplist 索引, 迭代 ziplist 编码的列表时使用
+    unsigned char *zi;
+
+    // 链表节点的指针, 迭代双端链表编码的列表时使用
+    listNode *ln;
+
+} listTypeIterator;
+
+/**
+ * 迭代列表时用来存储节点
+ */
+typedef struct {
+
+    // 列表迭代器
+    listTypeIterator *li;
+
+    // 压缩列表节点
+    unsigned char *zi;
+
+    // 双端链表节点
+    listNode *ln;
+    
+} listTypeEntry;
+
 // todo 暂时简化
 // #define LRU_CLOCK() ((1000/server.hz <= REDIS_LRU_CLOCK_RESOLUTION) ? server.lruclock : getLRUClock())
 #define LRU_CLOCK() (getLRUClock())
@@ -133,6 +180,9 @@ struct redisServer {
 
     // 最近一次 SAVE 后, 数据库被修改的次数
     long long dirty;
+
+    size_t list_max_ziplist_value;
+    size_t list_max_ziplist_entries;
 };
 
 // 通过复用来减少内存碎片, 以及减少操作耗时的共享对象

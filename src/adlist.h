@@ -60,6 +60,19 @@ typedef struct list {
  * T = O(1)
  */
 #define listLength(l) ((l)->len)
+// 表头节点
+#define listFirst(l) ((l)->head)
+// 表尾节点
+#define listLast(l) ((l)->tail)
+// 前置节点
+#define listPrevNode(n) ((n)->prev)
+// 后置节点
+#define listNextNode(n) ((n)->next)
+// 节点值
+#define listNodeValue(n) ((n)->value)
+
+// 设置复制函数
+#define listSetDupMethod(l,m) ((l)->dup = (m))
 
 // 将链表 l 的值释放函数设置为 m
 #define listSetFreeMethod(l,m) ((l)->free = (m))
@@ -67,6 +80,13 @@ typedef struct list {
 // 将链表的对比函数设置为 m
 // T = O(1)
 #define listSetMatchMethod(l,m) ((l)->match = (m))
+
+// 返回复制函数
+#define listGetDupMethod(l) ((l)->dup)
+// 返回释放函数
+#define listGetFreeMethod(l) ((l)->free)
+// 返回比对函数
+#define listGetMatchMethod(l) ((l)->match)
 
 /**
  * 迭代器进行迭代的方向
