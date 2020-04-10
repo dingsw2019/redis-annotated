@@ -202,6 +202,92 @@ void getsetCommand(redisClient *c) {
 }
 
 /**
+ * SETRANGE key offset value
+ */
+void setrangeCommand(redisClient *c) {
+    long offset;
+    robj *o;
+
+    sds value = c->argv[3]->ptr;
+
+    // 获取 offset 值
+    if (getLongFromObjectOrReply(c, c->argv[2], &offset, NULL) != REDIS_OK)
+        return;
+
+    // 校验 offset 值
+    if (offset < 0) {
+        addReplyError(c, "offset is out of range");
+        return;
+    }
+
+    // 获取 key 的值对象
+    o = lookupKeyWrite(c->db, c->argv[1]);
+    
+    // 值对象不存在
+    if (o == NULL) {
+        
+        // value 为空, 无可设置内容, 向客户端返回 0
+        if (sdslen(value) == 0) {
+            addReply(c, shared.czero);
+            return;
+        }
+
+        // 超过字符串最大长度限制, 向客户端发送错误回复
+        if (checkStringLength(c, offset+sdslen(value)) != REDIS_OK)
+            return;
+
+        // 创建一个空字符串的值对象
+        o = createObject(REDIS_STRING, sdsempty());
+        // 在数据库中将键值关联
+        dbAdd(c->db, c->argv[1], o);
+
+    // 值对象存在
+    } else {
+        size_t olen;
+
+        // 验证值对象是字符串类型
+        if (checkType(c, o, REDIS_STRING))
+            return ;
+
+        // value 为空, 无可设置内容, 向客户端返回 0
+        olen = stringObjectLen(o);
+        if (sdslen(value) == 0) {
+            addReplyLongLong(c, olen);
+            return;
+        }
+
+        // 超过字符串最大长度限制, 向客户端发送错误回复
+        if (checkStringLength(c, offset+sdslen(value)) != REDIS_OK)
+            return;
+
+        // 更新数据库的值对象
+        o = dbUnshareStringValue(c->db, c->argv[1], o);
+    }
+
+    // 判断可删, 前面做过 value > 0 的判断了
+    if (sdslen(value) > 0) {
+
+        // 用 0 填充字符串到指定长度
+        o->ptr = sdsgrowzero(o->ptr,offset+sdslen(value));
+
+        // 将 value 复制到字符串的 offset 位置
+        memcpy((char*)o->ptr+offset, value, sdslen(value));
+
+        // 向数据库发送键被修改的信号
+        signalModifiedKey(c->db, c->argv[1]);
+
+        // 发送事件通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "setrange", c->argv[1], c->db->id);
+
+        // 将服务器设为脏
+        server.dirty++;
+    }
+
+    // 设置成功, 向客户端发送新的字符串长度
+    addReplyLongLong(c, sdslen(o->ptr));
+}
+
+/**
  * 获取多个 key 的值对象
  */
 void mgetCommand(redisClient *c) {
