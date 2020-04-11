@@ -5,10 +5,10 @@
  *                       |
  *                       |=> network
  * 
- *     1. 用户输入字符串的命令,
- *     2. t_string.c 根据各命令的规则, 从 db 获取
- *     3. 某个 key 的 val, 然后处理修改 val, 
- *     4. 最后通过 networking.c 将处理后的结果发送给客户端
+ *   1. 用户输入字符串的命令 (每个字段都是 RedisObject 结构),
+ *   2. t_string.c 根据各命令的规则, 从 db 获取 key 的 val, 然后处理修改 val
+ *      (db 中的 val 是以 RedisObject 结构存储的)
+ *   3. 最后通过 networking.c 将处理后的结果发送给客户端
  * 
  * 2. 命令以空格拆分, 存放在 c->argv 数组中
  *      例如：SET key1 "Hello"

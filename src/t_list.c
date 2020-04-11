@@ -1,7 +1,14 @@
 /**
  * 
- * 压缩列表中存储的是值（字符串、数字）
- * 双端链表中存储的是Redis对象的指针 (robj)
+ * 列表值(subject)的首地址以 robj 格式保存在 Db 中, 
+ * 列表值可以是以下两种数据结构
+ *  - 压缩列表, 提取调用方传入 robj 格式中的值(字符串、数字), 
+ *             以字符串、数字的内容存入压缩列表的节点
+ *  - 双端链表, 直接将调用方传入的 robj 存入链表节点
+ * 
+ * 将 subject->ptr 看成 ziplist 或 linkedlist 的首地址
+ * 当 subject->ptr 是 ziplist 时, ziplist->node 是字符串或数字
+ * 当 subject->ptr 是 linkedlist 时, linkedlist->node 是 robj 结构的值
  */
 
 #include "redis.h"
@@ -231,6 +238,62 @@ void listTypePush(robj *subject, robj *value, int where) {
 }
 
 /**
+ * 从列表的表头或表尾弹出一个节点
+ * 以 robj 格式返回弹出的节点值
+ * where 控制弹出方向
+ * - REDIS_HEAD 表头添加
+ * - REDIS_TAIL 表尾添加
+ */
+robj *listTypePop(robj *subject, int where) {
+
+    robj *value;
+
+    // 压缩列表弹出元素
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST) {
+        char *vstr;
+        unsigned int vlen;
+        long long vlong;
+
+        // 获取节点
+        int pos = (where == REDIS_HEAD) ? 0 : -1;
+        unsigned char *p = ziplistIndex((char*)subject->ptr,pos);
+
+        // 节点值填充到 value
+        if (ziplistGet(p, &vstr, &vlen, &vlong)) {
+            if (vstr) {
+                value = createStringObject((char*)vstr, vlen);
+            } else {
+                value = createStringObjectFromLongLong(vlong);
+            }
+            subject->ptr = ziplistDelete(subject->ptr, &p);
+        }
+
+    // 双端链表弹出元素
+    } else if (subject->encoding == REDIS_ENCODING_LINKEDLIST) {
+        list *list = subject->ptr;
+        listNode *ln;
+
+        if (where == REDIS_HEAD) {
+            ln = listFirst(list);
+        } else {
+            ln = listLast(list);
+        }
+
+        if (ln != NULL) {
+            value = listNodeValue(ln);
+            // ?? 为什么 ziplist 里面没有增加引用计数
+            incrRefCount(value);
+            listDelNode(list, ln);
+        }
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+    return value;
+}
+
+/**
  * 列表节点数
  */
 unsigned long listTypeLength(robj *subject) {
@@ -249,4 +312,118 @@ unsigned long listTypeLength(robj *subject) {
     }
 }
 
+/**
+ * 将对象 value 添加到指定节点的之前或之后
+ * where 控制添加方向
+ * - REDIS_HEAD 指定节点前
+ * - REDIS_TAIL 指定节点后
+ */
+void listTypeInsert(listTypeEntry *entry, robj *value, int where) {
 
+    robj *subject = entry->li->subject;
+
+    // 压缩列表
+    if (entry->li->encoding == REDIS_ENCODING_ZIPLIST) {
+
+        value = getDecodedObject(value);
+        // entry 之后添加
+        if (where == REDIS_TAIL) {
+            // 获取 entry 的下一个节点
+            unsigned char *next = ziplistNext(subject->ptr, entry->zi);
+
+            // 下一个节点不存在, 从尾部添加
+            if (next == NULL) {
+                subject->ptr = ziplistPush(subject->ptr, value->ptr, sdslen(value->ptr), REDIS_TAIL);
+
+            // 添加在 next 之前
+            } else {
+                subject->ptr = ziplistInsert(subject->ptr, next, value->ptr, sdslen(value->ptr));
+            }
+
+        // entry 之前添加
+        } else {
+            subject->ptr = ziplistInsert(subject->ptr, entry->zi, value->ptr, sdslen(value->ptr));
+        }
+        decrRefCount(value);
+
+    // 双端链表
+    } else if (entry->li->encoding == REDIS_ENCODING_LINKEDLIST) {
+
+        if (where == REDIS_TAIL) {
+            listInsertNode(subject->ptr, entry->ln, value, AL_START_TAIL);
+        } else {
+            listInsertNode(subject->ptr, entry->ln, value, AL_START_HEAD);
+        }
+        incrRefCount(value);
+
+    // 未知编码
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+}
+
+/**
+ * 将节点的值与对象 o 的值进行比对
+ * 相同返回 1, 否则返回 0
+ */
+int listTypeEqual(listTypeEntry *entry, robj *o) {
+
+    listTypeIterator *li = entry->li;
+
+    // 压缩列表
+    if (li->encoding == REDIS_ENCODING_ZIPLIST) {
+        redisAssertWithInfo(NULL,o,sdsEncodedObject(o));
+        return ziplistCompare(entry->zi, o->ptr, sdslen(o->ptr));
+
+    // 双端链表
+    } else if (li->encoding == REDIS_ENCODING_LINKEDLIST) {
+        return equalStringObjects(o, listNodeValue(entry->ln));
+
+    // 未知编码
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+}
+
+/**
+ * 删除 entry 指向的节点
+ */
+void listTypeDelete(listTypeEntry *entry) {
+
+    listTypeIterator *li = entry->li;
+
+    // 压缩列表
+    if (li->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *p = entry->zi;
+
+        li->subject->ptr = ziplistDelete(li->subject->ptr, &p);
+
+        // 删除节点之后, 更新迭代器的指针
+        if (li->direction == REDIS_TAIL) {
+            li->zi = p;
+        } else {
+            li->zi = ziplistPrev(li->subject->ptr, p);
+        }
+
+    // 双端链表
+    } else if (li->encoding == REDIS_ENCODING_LINKEDLIST) {
+
+        // 记录移动的节点
+        listNode *next;
+
+        if (li->direction == REDIS_TAIL) {
+            next = li->ln->next;
+        } else {
+            next = li->ln->prev;
+        }
+
+        listDelNode(li->subject->ptr, entry->ln);
+
+        // 更新节点指针指向
+        li->ln = next;
+        
+    // 未知编码
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+}

@@ -1044,6 +1044,10 @@ unsigned int ziplistGet(unsigned char *p, unsigned char **sstr, unsigned int *sl
     return 1;
 }
 
+unsigned char *ziplistInsert(unsigned char *zl, unsigned char *p, unsigned char *s, unsigned int slen) {
+    return __ziplistInsert(zl,p,s,slen);
+}
+
 /**
  * 从 zl 中删除 *p 指向的节点, 返回处理后的压缩列表
  * 并且更新 *p 位置, 使得可以在迭代列表的过程中对节点进行删除
