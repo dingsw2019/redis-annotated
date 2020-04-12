@@ -421,9 +421,242 @@ void listTypeDelete(listTypeEntry *entry) {
 
         // 更新节点指针指向
         li->ln = next;
-        
     // 未知编码
     } else {
         redisPanic("Unknown list encoding");
     }
+}
+
+/*----------------------- List 命令函数 ------------------------*/
+
+/**
+ * lpush, rpush的通用函数
+ * 添加成功, 回复客户端添加后的节点数量
+ * 添加失败, 回复客户端错误, 终止程序
+ */
+void pushGenericCommand(redisClient *c, int where) {
+    int j, waiting = 0, pushed = 0;
+
+    // 获取 key 的值
+    robj *lobj = lookupKeyWrite(c->db, c->argv[1]);
+
+    // 不存在值, 可能有客户端在等待这个键的出现
+    int may_have_waiting_clients = (lobj == NULL);
+
+    // 检查值对象类型
+    if (lobj && lobj->type != REDIS_LIST) {
+        addReply(c, shared.wrongtypeerr);
+        return ;
+    }
+
+    // 将列表状态设置为就绪
+    if (may_have_waiting_clients) signalListAsReady(c, c->argv[1]);
+
+    // 向列表对象中添加节点值
+    for (j=2; j<c->argc; j++) {
+
+        // 压缩节点值剩余空间
+        c->argv[j] = getDecodedObject(c->argv[j]);
+
+        // 如果列表键不存在, 创建一个
+        if (!lobj) {
+            lobj = createZiplistObject();
+            dbAdd(c->db, c->argv[1], c->argv[j]);
+        }
+
+        // 添加节点
+        listTypePush(lobj, c->argv[j], where);
+        pushed++;
+    }
+
+    // 返回节点数量
+    addReplyLongLong(c, waiting + (lobj ? listTypeLength(lobj) : 0));
+
+    // 只要有一个节点添加成功,
+    if (pushed) {
+        char *event = (where == REDIS_HEAD) ? "lpush" : "rpush";
+
+        // 发送键被修改的信号
+        signalModifiedKey(c->db, c->argv[1]);
+
+        // 发送事件通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_LIST, event, c->argv[1], c->db->id);
+    }
+
+    // 更新修改次数
+    server.dirty += pushed;
+}
+
+void lpushCommand(redisClient *c) {
+    pushGenericCommand(c, REDIS_HEAD);   
+}
+
+void rpushCommand(redisClient *c) {
+    pushGenericCommand(c, REDIS_TAIL);   
+}
+
+/**
+ * LPUSHX / RPUSHX 无需传入 *refval, 将 val 添加到列表的表头或表尾
+ * LINSERT 将 value 添加到 refval 之前或之后
+ */
+void pushxGenericCommand(redisClient *c, robj *refval, robj *val, int where) {
+    robj *subject;
+    listTypeIterator *iter;
+    listTypeEntry entry;
+    int inserted = 0;
+
+    // 如果列表键不存在或者不是列表类型, 返回
+    if ((subject = lookupKeyReadOrReply(c, c->argv[1], shared.czero)) == NULL ||
+        checkType(c,subject,REDIS_LIST)) {
+            return;
+    }
+
+    // 执行的是 LINSERT 命令
+    if (refval != NULL) {
+        // 判断值的长度是否超过限制而转码
+        listTypeTryConversion(subject, val);
+
+        // 获取指定节点的
+        iter = listTypeInitIterator(subject, 0, REDIS_TAIL);
+        while(listTypeNext(iter, &entry)) {
+            if (listTypeEqual(&entry, refval)) {
+                // 找到指定节点, 将值添加到该节点之前或之后
+                listTypeInsert(&entry,val, where);
+                inserted = 1;
+                break;
+            }
+        }
+        listTypeReleaseIterator(iter);
+
+        // 添加新节点
+        if (inserted) {
+            // 检查节点数量是否达到转码标准
+            if (subject->encoding == REDIS_ENCODING_ZIPLIST && 
+                ziplistLen(subject->ptr) > server.list_max_ziplist_entries) {
+                    listTypeConvert(subject, REDIS_ENCODING_LINKEDLIST);
+            }
+
+            // 发送键被修改的信号
+            signalModifiedKey(c->db, c->argv[1]);
+            // 发送事件通知
+            notifyKeyspaceEvent(REDIS_NOTIFY_LIST, "linsert", c->argv[1], c->db->id);
+            server.dirty++;
+
+        // 未添加新节点, 回复客户端添加失败
+        } else {
+            addReply(c, shared.cnegone);
+            return;
+        }
+
+    // 执行的是 LPUSHX 或 RPUSHX 命令
+    } else {
+        char *event = (where == REDIS_HEAD) ? "lpushx" : "rpushx";
+
+        // 添加节点
+        listTypePush(subject, val, where);
+
+        // 发送键被修改的信号
+        signalModifiedKey(c->db, c->argv[1]);
+
+        // 发送事件通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_LIST, event,c->argv[1] ,c->db->id);
+
+        // 更新修改次数
+        server.dirty++;
+    }
+
+    // 回复客户端节点的数量
+    addReplyLongLong(c, listTypeLength(subject));
+}
+
+// value 只有一个, LPUSH key value
+void lpushxCommand(redisClient *c) {
+    c->argv[2] = tryObjectEncoding(c->argv[2]);
+    pushxGenericCommand(c, NULL, c->argv[2], REDIS_HEAD);
+}
+
+void rpushxCommand(redisClient *c) {
+    c->argv[2] = tryObjectEncoding(c->argv[2]);
+    pushxGenericCommand(c, NULL, c->argv[2], REDIS_TAIL);
+}
+
+//LINSERT KEY_NAME BEFORE EXISTING_VALUE NEW_VALUE 
+void linsertCommand(redisClient *c) {
+
+    c->argv[4] = tryObjectEncoding(c->argv[4]);
+
+    if (strcasecmp(c->argv[2]->ptr, "after") == 0) {
+        pushxGenericCommand(c, c->argv[3], c->argv[4], REDIS_TAIL);
+
+    } else if (strcasecmp(c->argv[2]->ptr, "before") == 0) {
+        pushxGenericCommand(c, c->argv[3], c->argv[4], REDIS_HEAD);
+
+    } else {
+        addReply(c, shared.syntaxerr);
+    }
+}
+
+void llenCommand(redisClient *c) {
+
+    // 获取列表对象
+    robj *o = lookupKeyReadOrReply(c, c->argv[1], shared.czero);
+
+    if (o == NULL || checkType(c, o, REDIS_LIST)) return;
+
+    // 回复客户端, 节点数量
+    addReplyLongLong(c, listTypeLength(o));
+}
+
+// LINDEX KEY_NAME INDEX_POSITION
+void lindexCommand(redisClient *c) {
+
+    // 获取列表值
+    robj *o = lookupKeyReadOrReply(c, c->argv[1], shared.czero);
+    if (o == NULL || checkType(c, o, REDIS_LIST)) return;
+
+    long index;
+    robj *value = NULL;
+
+    // 获取 index 值
+    if ((getLongFromObjectOrReply(c, c->argv[3], &index, NULL)) != REDIS_OK)
+        return;
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *p;
+        unsigned char *vstr;
+        unsigned int vlen;
+        long long vlong;
+        
+        p = ziplistIndex(o->ptr, index);
+
+        if (ziplistGet(p, &vstr, &vlen, &vlong)) {
+
+            if (vstr) {
+                value = createStringObject(vstr,vlen);
+            } else {
+                value = createStringObjectFromLongLong(vlong);
+            }
+            addReplyBulk(c, value);
+            decrRefCount(value);
+        
+        } else {
+            addReply(c, shared.nullbulk);
+        }
+    } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
+        listNode *ln = listIndex(o->ptr, index);
+
+        if (ln != NULL) {
+
+            addReplyBulk(c,listNodeValue(ln));
+        } else {
+            addReply(c, shared.nullbulk);
+        }
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+}
+
+void signalListAsReady(redisClient *c, robj *key) {
+
 }
