@@ -971,6 +971,76 @@ void lremCommand(redisClient *c) {
     if (removed) signalModifiedKey(c->db, c->argv[1]);
 }
 
+/**
+ * 将 value 添加到 dstkey 的列表中
+ * 如果 dstkey 不存在, 那么创建一个空列表并添加
+ */
+void rpoplpushHandlePush(redisClient *c, robj *dstkey, robj *dstobj, robj *value) {
+
+    // 创建一个空列表
+    if (!dstobj) {
+        dstobj = createZiplistObject();
+        dbAdd(c->db, dstkey, dstobj);
+        signalListAsReady(c, dstkey);
+    }
+
+    signalModifiedKey(c->db, dstkey);
+
+    // 添加节点
+    listTypePush(dstobj, value, REDIS_HEAD);
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_LIST, "lpush", dstkey, c->db->id);
+
+    addReplyBulk(c, value);
+}
+
+// RPOPLPUSH source destination
+void rpoplpushCommand(redisClient *c) {
+    robj *value, *sobj;
+
+    // 获取源列表
+    if ((sobj = lookupKeyWriteOrReply(c, c->argv[1], shared.nullbulk)) == NULL || 
+        checkType(c, sobj, REDIS_LIST)) return;
+
+    // 源列表为空, 无元素可 pop, 返回
+    if (listTypeLength(sobj) == 0) {
+        addReply(c, shared.nullbulk);
+
+    // 源列表非空
+    } else {
+
+        // 获取目标列表(要添加节点的列表)
+        robj *dobj = lookupKeyWrite(c->db, c->argv[2]);
+        robj *touchedkey = c->argv[1];
+
+        // 目标列表是否为列表类型
+        if (dobj && checkType(c, dobj, REDIS_LIST)) return;
+
+        // rpop 源列表, 获取最后一个节点
+        value = listTypePop(sobj, REDIS_TAIL);
+        incrRefCount(value);
+
+        // 将节点添加到目标列表
+        rpoplpushHandlePush(c, c->argv[2], dobj, value);
+        decrRefCount(value);
+
+        notifyKeyspaceEvent(REDIS_NOTIFY_LIST, "rpop", touchedkey, c->db->id);
+
+        // 如果源列表空了, 删除其列表键
+        if (listTypeLength(sobj) == 0) {
+            dbDelete(c->db, touchedkey);
+            notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC, "del",touchedkey, c->db->id);
+        }
+
+        signalModifiedKey(c->db, touchedkey);
+
+        decrRefCount(touchedkey);
+
+        server.dirty++;
+    }
+
+}
+
 void signalListAsReady(redisClient *c, robj *key) {
 
 }
