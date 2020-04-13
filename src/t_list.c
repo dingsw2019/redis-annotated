@@ -730,8 +730,8 @@ void popGenericCommand(redisClient *c, int where) {
 
     // 获取列表值
     robj *o = lookupKeyWriteOrReply(c, c->argv[1], shared.nullbulk);
-    if (o == NULL || checkType(c, o, REDIS_LIST))
-        return;
+    
+    if (o == NULL || checkType(c, o, REDIS_LIST)) return;
 
     robj *value = listTypePop(o, where);
 
@@ -759,12 +759,216 @@ void popGenericCommand(redisClient *c, int where) {
     }
 }
 
+// LPOP KEY_NAME
 void lpopCommand(redisClient *c) {
     popGenericCommand(c, REDIS_HEAD);   
 }
 
+// RPOP KEY_NAME
 void rpopCommand(redisClient *c) {
     popGenericCommand(c, REDIS_TAIL);   
+}
+
+// LRANGE KEY_NAME START END
+void lrangeCommand(redisClient *c) {
+
+    robj *o;
+    // 获取索引值
+    long start, end, llen, rangelen;
+    if (getLongFromObjectOrReply(c, c->argv[2], &start, NULL) == NULL ||
+        getLongFromObjectOrReply(c, c->argv[3], &end, NULL) == NULL) {
+            return;
+    }
+
+    // 获取列表值
+    if ((o = lookupKeyReadOrReply(c, c->argv[1], NULL)) == NULL || 
+         checkType(c, o, REDIS_LIST)) return;
+
+    // 列表节点数量
+    llen = listTypeLength(o);
+
+    // 负索引转正索引
+    if (start < 0) start = llen + start;
+    if (end < 0) end = llen + end;
+    if (start < 0) start = 0;
+
+    // 计算长度
+    long len = (start > end) ? 0 : (end-start)+1;
+
+    // 索引倒置或超范围, 回复客户端空
+    if (start > end || start >= llen) {
+        addReply(c, shared.emptymultibulk);
+        return;
+    }
+    // start < 0 同时 end > 最大值, 将包含所有节点
+    if (len >= llen) end = llen - 1;
+    rangelen = (end-start)+1;
+
+    addReplyMultiBulkLen(c,rangelen);
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *p = ziplistIndex(o->ptr, start);
+        unsigned char *vstr;
+        unsigned int vlen;
+        long long vlong;
+
+        while(rangelen--) {
+            ziplistGet(p, &vstr, &vlen, &vlong);
+            if (vstr) {
+                addReplyBulkCBuffer(c, vstr, vlen);
+            } else {
+                addReplyLongLong(c, vlong);
+            }
+            p = ziplistNext(o->ptr, p);
+        }
+    } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
+        listNode *ln;
+
+        // 起始节点
+        if (start > llen/2) start -= llen;
+        ln = listIndex(o->ptr, start);
+
+        // 收集范围内的节点, 回复给客户端
+        while(rangelen--) {
+            addReplyBulk(c, ln->value);
+            ln = ln->next;
+        }
+    } else {
+        redisPanic("List encoding is not LINKEDLIST nor ZIPLIST!");
+    }
+}
+
+// LTRIM KEY_NAME START STOP
+void ltrimCommand(redisClient *c) {
+
+    robj *o;
+    long start, end, llen, j, ltrim, rtrim;
+    list *list;
+    listNode *ln;
+
+    // 获取索引值
+    if (getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != REDIS_OK ||
+        getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != REDIS_OK) {
+            return;
+    }
+
+    // 获取列表值
+    if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.ok)) == NULL || 
+         checkType(c, o, REDIS_LIST)) return;
+
+    // 获取节点数量
+    llen = listTypeLength(o);
+    
+    // 负索引转正索引
+    if (start < 0) start = llen + start;
+    if (end < 0) end = llen + end;
+    if (start < 0) start = 0;
+
+    // 计算左右两端删除的长度
+    if (start > end || start >= llen) {
+        ltrim = llen;
+        rtrim = 0;
+    } else {
+        if (end >= llen) end = llen-1;
+        ltrim = start;
+        rtrim = llen-end-1;
+    }
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        // 删除范围外的节点
+        o->ptr = ziplistDeleteRange(o->ptr, 0, ltrim);
+
+        o->ptr = ziplistDeleteRange(o->ptr, -rtrim, rtrim);
+
+    } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
+        list = o->ptr;
+        // 删除左端节点
+        for(j = 0; j < ltrim; j++) {
+            ln = listFirst(list);
+            listDelNode(list, ln);
+        }
+        // 删除右端节点
+        for(j = 0; j < rtrim; j++) {
+            ln = listLast(list);
+            listDelNode(list, ln);
+        }
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_LIST, "ltrim", c->argv[1], c->db->id);
+
+    // 如果列表为空, 删除列表键
+    if (listTypeLength(o) == 0) {
+        dbDelete(c->db, c->argv[1]);
+        notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC, "del", c->argv[1], c->db->id);
+    }
+
+    // 发送键被修改的信号
+    signalModifiedKey(c->db, c->argv[1]);
+
+    // 更新
+    server.dirty++;
+
+    addReply(c, shared.ok);
+}
+
+// LREM KEY_NAME COUNT VALUE
+void lremCommand(redisClient *c) {
+    robj *subject, *obj;
+    long toremove, removed = 0;
+    listTypeIterator *li;
+    listTypeEntry entry;
+
+    // 压缩要查找的节点
+    obj = c->argv[3] = tryObjectEncoding(c->argv[3]);
+
+    // 获取删除数量
+    if (getLongFromObjectOrReply(c, c->argv[2], &toremove, NULL) != REDIS_OK)
+        return;
+
+    // 获取列表值
+    if ((subject = lookupKeyWriteOrReply(c, c->argv[1], shared.czero)) == NULL ||
+         checkType(c, subject, REDIS_LIST)) {
+             return;
+    }
+
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST)
+        obj = getDecodedObject(obj);
+
+    // 计算删除节点的数量和删除的迭代器(指向第一个节点)
+    if (toremove < 0) {
+        toremove = -toremove;
+        li = listTypeInitIterator(subject, -1, REDIS_HEAD);
+    } else {
+        li = listTypeInitIterator(subject, 0, REDIS_TAIL);
+    }
+
+    // 遍历删除节点
+    while(listTypeNext(li, &entry)) {
+        // 匹配成功, 删除节点
+        if (listTypeEqual(&entry, obj)) {
+            listTypeDelete(&entry);
+            server.dirty++;
+            removed++;
+
+            // 删除够数量了
+            if (toremove && toremove == removed) break;
+        }
+    }
+    listTypeReleaseIterator(li);
+
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST)
+        decrRefCount(obj);
+
+    // 删除空列表
+    if (listTypeLength(subject) == 0) dbDelete(c->db, c->argv[1]);
+
+    addReplyLongLong(c, removed);
+
+    if (removed) signalModifiedKey(c->db, c->argv[1]);
 }
 
 void signalListAsReady(redisClient *c, robj *key) {
