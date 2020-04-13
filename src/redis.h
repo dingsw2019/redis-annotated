@@ -400,8 +400,10 @@ void rewriteClientCommandArgument(redisClient *c, int i, robj *newval);
 void setExpire(redisDb *db, robj *key, long long when);
 robj *lookupKeyRead(redisDb *db, robj *key);
 robj *lookupKeyWrite(redisDb *db, robj *key);
+robj *lookupKeyWriteOrReply(redisClient *c, robj *key, robj *reply);
 robj *lookupKeyReadOrReply(redisClient *c, robj *key, robj *reply);
 void dbAdd(redisDb *db, robj *key, robj *val);
+int dbDelete(redisDb *db, robj *key);
 void dbOverwrite(redisDb *db, robj *key, robj *val);
 void setKey(redisDb *db, robj *key, robj *val);
 

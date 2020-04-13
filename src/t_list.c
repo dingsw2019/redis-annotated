@@ -657,6 +657,116 @@ void lindexCommand(redisClient *c) {
     }
 }
 
+// LSET KEY_NAME INDEX VALUE
+void lsetCommand(redisClient *c) {
+
+    // 获取列表键对象, 检查键的类型是否为列表
+    robj *o = lookupKeyWriteOrReply(c, c->argv[1], shared.nokeyerr);
+    if (o == NULL || checkType(c, o, REDIS_LIST)) return;
+
+    long index;
+    // 取出值
+    robj *value = (c->argv[3] = tryObjectEncoding(c->argv[3]));
+    // 取出索引
+    if (getLongFromObjectOrReply(c, c->argv[2], &index, NULL) != REDIS_OK)
+        return;
+
+    // value 是否需要转码
+    listTypeTryConversion(o, value);
+
+    // 压缩列表
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *p, *zl = o->ptr;
+
+        // 获取 index 指向的值
+        p = ziplistIndex(zl, index);
+
+        if (p == NULL) {
+            addReply(c, shared.outofrangeerr);
+        } else {
+            // 删除旧值
+            o->ptr = ziplistDelete(o->ptr, &p);
+            // 添加新值
+            value = getDecodedObject(value);
+            o->ptr = ziplistInsert(o->ptr, p, value->ptr, sdslen(value->ptr));
+            // getDecodeObject对value进行了incrRef操作
+            // 所以这里执行 decrRef
+            decrRefCount(value);
+
+            addReply(c, shared.ok);
+            signalModifiedKey(c->db, c->argv[1]);
+            notifyKeyspaceEvent(REDIS_NOTIFY_LIST, "lset", c->argv[1], c->db->id);
+            server.dirty++;
+        }
+
+    // 双端链表
+    } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
+
+        // 获取 index 指向的值
+        listNode *ln = listIndex(o->ptr, index);
+
+        if (ln == NULL) {
+            addReply(c, shared.outofrangeerr);
+        } else {
+            // 删除旧节点
+            decrRefCount((robj*)listNodeValue(ln));
+            // 指向新节点
+            listNodeValue(ln) = value;
+            incrRefCount(value);
+
+            addReply(c, shared.ok);
+            signalModifiedKey(c->db, c->argv[1]);
+            notifyKeyspaceEvent(REDIS_NOTIFY_LIST, "lset", c->argv[1], c->db->id);
+            server.dirty++;
+        }
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+}
+
+void popGenericCommand(redisClient *c, int where) {
+
+    // 获取列表值
+    robj *o = lookupKeyWriteOrReply(c, c->argv[1], shared.nullbulk);
+    if (o == NULL || checkType(c, o, REDIS_LIST))
+        return;
+
+    robj *value = listTypePop(o, where);
+
+    if (value == NULL) {
+        addReply(c, shared.nullbulk);
+    } else {
+        char *event = (where == REDIS_HEAD) ? "lpop" : "rpop";
+
+        // 回复客户端删除的值
+        addReply(c,value);
+        decrRefCount(value);
+
+        // 发送事件通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_LIST, event, c->argv[1], c->db->id);
+
+        // 列表对象空了, 从 db 中删除这个列表键
+        if (listTypeLength(o) == 0) {
+            notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC, "del", c->argv[1], c->db->id);
+            dbDelete(c->db, c->argv[1]);
+        }
+
+        signalModifiedKey(c->db, c->argv[1]);
+
+        server.dirty++;
+    }
+}
+
+void lpopCommand(redisClient *c) {
+    popGenericCommand(c, REDIS_HEAD);   
+}
+
+void rpopCommand(redisClient *c) {
+    popGenericCommand(c, REDIS_TAIL);   
+}
+
 void signalListAsReady(redisClient *c, robj *key) {
 
 }

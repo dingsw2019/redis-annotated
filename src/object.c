@@ -511,7 +511,7 @@ robj *tryObjectEncoding(robj *o) {
 }
 
 /**
- * 只针对字符串对象
+ * 将数字转换成字符串
  * raw 和 embstr 编码, 引用计数加 1 后返回字符串对象
  * int 编码, 将整数转换成字符串存入新字符串对象, 并返回新对象
  */
@@ -532,7 +532,7 @@ robj *getDecodedObject(robj *o) {
         dec = createStringObject(buf, strlen(buf));
         return dec;
     } else {
-        // redisPanic("Unknown encoding type");
+        redisPanic("Unknown encoding type");
     }
 }
 

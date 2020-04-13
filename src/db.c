@@ -19,6 +19,12 @@ robj *lookupKeyWrite(redisDb *db, robj *key) {
     return key;
 }
 
+robj *lookupKeyWriteOrReply(redisClient *c, robj *key, robj *reply) {
+    robj *o;
+
+    return o;
+}
+
 /**
  * 查找 key 的值对象
  * - key 存在, 返回 key 的值对象
@@ -38,6 +44,11 @@ robj *lookupKeyReadOrReply(redisClient *c, robj *key, robj *reply) {
  */
 void dbAdd(redisDb *db, robj *key, robj *val) {
 
+}
+
+int dbDelete(redisDb *db, robj *key) {
+
+    return 0;
 }
 
 robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o) {
