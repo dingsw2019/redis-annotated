@@ -1041,6 +1041,198 @@ void rpoplpushCommand(redisClient *c) {
 
 }
 
-void signalListAsReady(redisClient *c, robj *key) {
+/**
+ * 对给定客户端进行阻塞
+ * keys     任意多个 key
+ * numkeys  keys 的数量
+ * timeout  阻塞的最长时间, 0 是无限阻塞
+ * target   在解除阻塞时, 将结果保存在这个指针中, 而不是返回给客户端
+ */
+void blockForKeys(redisClient *c, robj **keys, int numkeys, mstime_t timeout, robj *target) {
+    dictEntry *de;
+    list *l;
+    int j;
 
+    // 设置阻塞状态的超时时间
+    c->bpop.timeout = timeout;
+
+    // target 在执行 RPOPLPUSH 命令时使用
+    c->bpop.target = target;
+    if (target != NULL) incrRefCount(target);
+
+    // 关联阻塞客户端和键的信息
+    for (j = 0; j < numkeys; j++) {
+
+        // 记下造成客户端阻塞的键
+        // 以下语句在键不存在于集合时, 将它添加到集合
+        if (dictAdd(c->bpop.keys, keys[j], NULL) != DICT_OK) continue;
+
+        incrRefCount(keys[j]);
+
+        // 值是一个链表, 链表中包含所有被阻塞的客户端
+        // 以下程序将阻塞键和被阻塞客户端关联起来
+        de = dictFind(c->db->blocking_keys, keys[j]);
+        if (de == NULL) {
+            // 链表不存在, 新建一个链表, 并将它关联到字典中
+            int retval;
+
+            l = listCreate();
+            retval = dictAdd(c->db->blocking_keys, keys[j], l);
+            incrRefCount(keys[j]);
+            redisAssertWithInfo(c, keys[j], retval == DICT_OK);
+        } else {
+            l = dictGetVal(de);
+        }
+        // 将客户端添加到被阻塞客户端的链表中
+        listAddNodeTail(l, c);
+    }
+
+    blockClient(c, REDIS_BLOCKED_LIST);
+}
+
+/**
+ * 如果客户端正因为等待 key 被 push 而阻塞
+ * 那么将 key 放到 server.ready_keys 列表里面
+ * 
+ * read_keys 是哈希表
+ * 可以避免在事务或者脚本中, 将同一个 key 一次又一次添加到列表的情况出现
+ * 这个列表最终会被 handleClientsBlockedOnLists() 函数处理
+ */
+void signalListAsReady(redisClient *c, robj *key) {
+    readyList *rl;
+
+    // 没有客户端被 key 阻塞, 返回
+    if (dictFind(c->db->blocking_keys, key) == NULL) return;
+
+    // key 已经添加到 ready_keys 了, 返回
+    if (dictFind(c->db->ready_keys, key) != NULL) return;
+
+    // 创建一个 readyList 结构, 保存键和数据库
+    // 然后将 readyList 添加到 ready_keys 
+    rl = zmalloc(sizeof(*rl));
+    rl->key = key;
+    rl->db = c->db;
+    incrRefCount(key);
+    listAddNodeTail(server.ready_keys, rl);
+
+    incrRefCount(key);
+    redisAssert(dictAdd(c->db->ready_keys, key, NULL) == DICT_OK);
+
+}
+
+// BLPOP key [key ...] timeout
+// 执行一次 pop 一个, 从左到右的 key 执行弹出
+// 如果所有 key 都是空的, block 等待有值了再 pop
+void blockingPopGenericCommand(redisClient *c, int where) {
+    robj *o;
+    mstime_t timeout;
+    int j;
+
+    // 取出 timeout
+    if (getLongLongFromObjectOrReply(c, c->argv[c->argc-1], &timeout, UNIT_SECONDS) != REDIS_OK) 
+        return;
+
+    // 遍历列表键
+    for (j = 1; j < c->argc-1; j++) {
+        // 取出列表值
+        o = lookupKeyWrite(c->db, c->argv[j]);
+
+        if (o != NULL) {
+            // 类型错误, 返回
+            if (o->type != REDIS_LIST) {
+                addReply(c, shared.wrongtypeerr);
+                return;
+            } else {
+                // 非空列表
+                if (listTypeLength(o) != 0) {
+
+                    char *event = (where == REDIS_HEAD) ? "lpop" : "rpop";
+
+                    // 弹出值
+                    robj *value = listTypePop(o, where);
+
+                    // 回复客户端
+                    addReplyMultiBulkLen(c, 2);
+                    // 回复弹出元素的列表
+                    addReplyBulk(c, c->argv[j]);
+                    // 回复弹出值
+                    addReplyBulk(c, value);
+
+                    decrRefCount(value);
+
+                    notifyKeyspaceEvent(REDIS_NOTIFY_LIST, event, c->argv[j], c->db->id);
+
+                    // 删除空列表
+                    if (listTypeLength(o) == 0) {
+                        dbDelete(c->db, c->argv[j]);
+                        notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC, "del", c->argv[j], c->db->id);
+                    }
+
+                    // 发送键被修改的信号
+                    signalModifiedKey(c->db, c->argv[j]);
+
+                    server.dirty++;
+
+                    // 传播一个 [LR]POP, 而不是 B[LR]POP
+                    rewriteClientCommandVector(c, 2, 
+                        (where == REDIS_HEAD) ? shared.lpop : shared.rpop,
+                        c->argv[j]);
+
+                    return;
+                }
+            }
+        }
+    }
+
+    // 如果命令在一个事务中执行,那么为了不产生死等待
+    // 服务器只能向客户端发送一个空回复
+    if (c->flags & REDIS_MULTI) {
+        addReply(c, shared.nullmultibulk);
+        return;
+    }
+
+    // 所有输入列表键都不存在, 只能阻塞了
+    blockForKeys(c, c->argv+1, c->argc-2, timeout, NULL);
+}
+
+void blpopCommand(redisClient *c) {
+    blockingPopGenericCommand(c, REDIS_HEAD);
+}
+
+void brpopCommand(redisClient *c) {
+    blockingPopGenericCommand(c, REDIS_TAIL);
+}
+
+// BRPOPLPUSH source destination timeout
+void brpoplpushCommand(redisClient *c) {
+    mstime_t timeout;
+
+    // 取 timeout 参数
+    if (getLongLongFromObjectOrReply(c, c->argv[1], &timeout, UNIT_SECONDS) != REDIS_OK)
+        return;
+
+    // 取出列表键
+    robj *key = lookupKeyWrite(c->db, c->argv[1]);
+
+    // 列表键不存在, 阻塞等待
+    if (key == NULL) {
+        if (c->flags & REDIS_MULTI) {
+            addReply(c, shared.nullbulk);
+        } else {
+            blockForKeys(c, c->argv+1, 1, timeout, c->argv[2]);
+        }
+
+
+    // 列表键非空, 执行 RPOP
+    } else {
+        // 非列表类型的值, 返回
+        if (key->type != REDIS_LIST) {
+            addReply(c, shared.wrongtypeerr);
+
+        } else {
+            redisAssertWithInfo(c, key, listTypeLength(key) > 0);
+
+            rpoplpushCommand(c);
+        }
+    }
 }

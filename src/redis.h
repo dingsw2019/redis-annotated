@@ -49,6 +49,14 @@
 #define REDIS_ENCODING_SKIPLIST 7
 #define REDIS_ENCODING_EMBSTR 8
 
+/* 客户端标识标志 redisClient->flags */
+#define REDIS_MULTI (1<<3)
+
+/* 客户端阻塞状态 */
+#define REDIS_BLOCKED_NONE 0
+#define REDIS_BLOCKED_LIST 1
+#define REDIS_BLOCKED_WAIT 2
+
 /* 双端链表的方向 */
 #define REDIS_HEAD 0
 #define REDIS_TAIL 1
@@ -57,6 +65,8 @@
 #define redisAssertWithInfo(_c,_o,_e) _exit(1)
 #define redisAssert(_e) _exit(1)
 #define redisPanic(_e) _exit(1)
+
+typedef long long mstime_t; /* 毫秒 */
 
 // LRU 是Least Recently Used的缩写
 // 即最近最少使用，是一种常用的页面置换算法，选择最近最久未使用的页面予以淘汰。 
@@ -151,11 +161,59 @@ typedef struct {
 
 typedef struct redisDb {
 
+    // 数据库键空间, 保存所有键值对
     dict *dict;
+
+    // 键的过期时间, 字典键为键, 字典的值为过期时间 UNIX 时间戳
+    dict *expires;
+
+    // 正处于阻塞状态的键
+    dict *blocking_keys;
+
+    // 可以解除阻塞的键
+    dict *ready_keys;
+
+    // 正在被 WATCH 命令监视的键
+    dict *watched_keys;
 
     // 数据库号码
     int id;
+
+    // 数据库的键的平均 TTL, 统计信息
+    long long avg_ttl;
+
 } redisDb;
+
+// 阻塞状态
+typedef struct blockingState {
+
+    /* Generic fields. */
+    // 阻塞时限
+    mstime_t timeout;       /* Blocking operation timeout. If UNIX current time
+                             * is > timeout then the operation timed out. */
+
+    /* REDIS_BLOCK_LIST */
+    // 造成阻塞的键
+    dict *keys;             /* The keys we are waiting to terminate a blocking
+                             * operation such as BLPOP. Otherwise NULL. */
+    // 在被阻塞的键有新元素进入时，需要将这些新元素添加到哪里的目标键
+    // 用于 BRPOPLPUSH 命令
+    robj *target;           /* The key that should receive the element,
+                             * for BRPOPLPUSH. */
+
+    /* REDIS_BLOCK_WAIT */
+    // 等待 ACK 的复制节点数量
+    int numreplicas;        /* Number of replicas we are waiting for ACK. */
+    // 复制偏移量
+    long long reploffset;   /* Replication offset to reach. */
+
+} blockingState;
+
+// 记录解除了客户端的阻塞状态的键，以及键所在的数据库。
+typedef struct readyList {
+    redisDb *db;
+    robj *key;
+} readyList;
 
 typedef struct redisClient {
 
@@ -171,6 +229,15 @@ typedef struct redisClient {
     // 参数对象数组
     robj **argv;
 
+    // 客户端状态标志
+    int flags;  /* REDIS_SLAVE | REDIS_MONITOR | REDIS_MULTI ... */
+
+    // 阻塞类型
+    int btype;
+
+    // 阻塞状态
+    blockingState bpop;
+
 } redisClient;
 
 struct redisServer {
@@ -183,6 +250,9 @@ struct redisServer {
 
     size_t list_max_ziplist_value;
     size_t list_max_ziplist_entries;
+
+    // 用于 BLPOP, BRPOP, BRPOPLPUSH 
+    list *ready_keys;
 };
 
 // 通过复用来减少内存碎片, 以及减少操作耗时的共享对象
@@ -393,6 +463,7 @@ void addReplyBulkCBuffer(redisClient *c, void *p, size_t len);
 void addReplyLongLong(redisClient *c, long long ll);
 
 void rewriteClientCommandArgument(redisClient *c, int i, robj *newval);
+void rewriteClientCommandVector(redisClient *c, int argc, ...);
 
 /* db.c -- Keyspace access API 
  * 数据库操作函数
@@ -417,5 +488,8 @@ void signalFlushedDb(int dbid);
 void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid);
 int keyspaceEventsStringToFlags(char *classes);
 sds keyspaceEventsFlagsToString(int flags);
+
+/* 阻塞客户端的方法 */
+void blockClient(redisClient *c, int btype);
 
 #endif

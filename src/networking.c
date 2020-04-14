@@ -55,3 +55,8 @@ void addReplyMultiBulkLen(redisClient *c, long length) {
 void rewriteClientCommandArgument(redisClient *c, int i, robj *newval) {
 
 }
+
+// 修改客户端的参数数组
+void rewriteClientCommandVector(redisClient *c, int argc, ...) {
+
+}
