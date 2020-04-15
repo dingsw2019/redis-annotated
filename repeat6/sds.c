@@ -153,6 +153,20 @@ sds sdsdup(sds s)
     return sdsnewlen(s,strlen(s));
 }
 
+// 删除空闲内存空间
+sds sdsRemoveFreeSpace(sds s) {
+
+    struct sdshdr *sh = (void*)(s-sizeof(struct sdshdr));
+
+    // 重分配
+    sh = zrealloc(sh, sizeof(struct sdshdr)+sh->len+1);
+
+    // 闲置空间置为 0
+    sh->free = 0;
+
+    return sh->buf;
+}
+
 // 删除两端指定字符
 sds sdstrim(sds s,const char *cset)
 {

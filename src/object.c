@@ -59,14 +59,22 @@ robj *createRawStringObject(char *ptr, size_t len) {
 /**
  * 创建并返回一个 REDIS_ENCODING_EMBSTR 编码的字符对象
  * 在此函数中分配 sds 内存, 因为 embstr字符不可修改
+ * 
+ * --------------------------------------------------
+ * |         redisObject         |      sdshdr      |
+ * --------------------------------------------------
+ * | type | encoding | ptr | ... | free | len | buf |
+ * --------------------------------------------------
  */
-robj *createEmbeddeStringObject(char *ptr, size_t len) {
+robj *createEmbeddedStringObject(char *ptr, size_t len) {
 
     robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr)+len+1);
+    // 结合图看, o+1指向 sdshdr 的首地址
     struct sdshdr *sh = (void*)(o+1);
 
     o->type = REDIS_STRING;
     o->encoding = REDIS_ENCODING_EMBSTR;
+    // 结合图看, sh+1 指向 sdshdr 的 buf 的首地址
     o->ptr = sh+1;
     o->refcount = 1;
     o->lru = LRU_CLOCK();
@@ -93,7 +101,7 @@ robj *createEmbeddeStringObject(char *ptr, size_t len) {
 robj *createStringObject(char *ptr, size_t len) {
 
     if (len < REDIS_ENCODING_EMBSTR_SIZE_LIMIT) 
-        return createEmbeddeStringObject(ptr, len);
+        return createEmbeddedStringObject(ptr, len);
     else 
         return createRawStringObject(ptr, len);
 }
@@ -173,7 +181,7 @@ robj *dupStringObject(robj *o) {
     case REDIS_ENCODING_RAW:
         return createRawStringObject(o->ptr, sdslen(o->ptr));
     case REDIS_ENCODING_EMBSTR:
-        return createEmbeddeStringObject(o->ptr, sdslen(o->ptr));
+        return createEmbeddedStringObject(o->ptr, sdslen(o->ptr));
     case REDIS_ENCODING_INT:
         d = createObject(REDIS_STRING, NULL);
         d->encoding = REDIS_ENCODING_INT;
@@ -495,7 +503,7 @@ robj *tryObjectEncoding(robj *o) {
         robj *emb;
 
         if (o->encoding == REDIS_ENCODING_EMBSTR) return o;
-        emb = createEmbeddeStringObject(s, sdslen(s));
+        emb = createEmbeddedStringObject(s, sdslen(s));
         decrRefCount(o);
         return emb;
     }
@@ -512,7 +520,7 @@ robj *tryObjectEncoding(robj *o) {
 
 /**
  * 将数字转换成字符串
- * raw 和 embstr 编码, 引用计数加 1 后返回字符串对象
+ * raw 和 embstr 编码, 引用计数加 1 后返回redis对象
  * int 编码, 将整数转换成字符串存入新字符串对象, 并返回新对象
  */
 robj *getDecodedObject(robj *o) {
@@ -973,7 +981,7 @@ int main () {
     printf("create embstr string object: ");
     {
         freeStringObject(o);
-        o = createEmbeddeStringObject("embstr string", 13);
+        o = createEmbeddedStringObject("embstr string", 13);
         assert(o->type == REDIS_STRING);
         assert(o->encoding == REDIS_ENCODING_EMBSTR);
         assert(!sdscmp(o->ptr,sdsnew("embstr string")));

@@ -32,6 +32,9 @@ static inline size_t sdsavail(const sds s)
     return sh->free;
 }
 
+sds sdsempty(void);
+sds sdscatlen(sds s,const void *t,size_t len);
+sds sdsnewlen(const void *init, size_t initlen);
 sds sdsnew(const char *init);
 int sdscmp(const sds s1, const sds s2);
 void sdsfree(sds s);
@@ -40,5 +43,11 @@ sds sdstrim(sds s,const char *cset);
 sds sdscat(sds s,const char *t);
 void sdsrange(sds s,int start,int end);
 sds sdscatsds(sds s, const sds t);
+sds sdsfromlonglong(long long value);
+
+sds sdsgrowzero(sds s,size_t len);
+sds sdsMakeRoomFor(sds s,size_t addlen);
+
+sds sdsRemoveFreeSpace(sds s);
 
 #endif
