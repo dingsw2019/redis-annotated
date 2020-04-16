@@ -100,7 +100,7 @@ robj *createEmbeddedStringObject(char *ptr, size_t len) {
  */
 robj *createStringObject(char *ptr, size_t len) {
 
-    if (len < REDIS_ENCODING_EMBSTR_SIZE_LIMIT) 
+    if (len <= REDIS_ENCODING_EMBSTR_SIZE_LIMIT) 
         return createEmbeddedStringObject(ptr, len);
     else 
         return createRawStringObject(ptr, len);
@@ -157,7 +157,7 @@ robj *createStringObjectFromLongDouble(long double value) {
     // 将 3.0000 变成 3
     if (strchr(buf, '.') != NULL) {
         char *p = buf+len-1;
-        if (*p == '0') {
+        while (*p == '0') {
             p--;
             len--;
         }

@@ -26,6 +26,11 @@
 #define REDIS_OK 0
 #define REDIS_ERR -1
 
+/* 默认的服务器配置值*/
+
+#define REDIS_SHARED_INTEGERS 10000  /* redis字符串对象的整数编码的共享整数范围(1~10000) */
+#define REDIS_SHARED_SELECT_CMDS 10
+
 // 对象类型
 #define REDIS_STRING 0
 #define REDIS_LIST 1
@@ -108,5 +113,69 @@ typedef struct zrangespec {
     // 1 表示不包含 , 0 包含
     int minex, maxex;
 } zrangespec;
+
+// 通过复用来减少内存碎片, 以及减少操作耗时的共享对象
+struct sharedObjectsStruct {
+    robj *crlf, *ok, *err, *emptybulk, *czero, *cone, *cnegone, *pong, *space,
+    *colon, *nullbulk, *nullmultibulk, *queued,
+    *emptymultibulk, *wrongtypeerr, *nokeyerr, *syntaxerr, *sameobjecterr,
+    *outofrangeerr, *noscripterr, *loadingerr, *slowscripterr, *bgsaveerr,
+    *masterdownerr, *roslaveerr, *execaborterr, *noautherr, *noreplicaserr,
+    *busykeyerr, *oomerr, *plus, *messagebulk, *pmessagebulk, *subscribebulk,
+    *unsubscribebulk, *psubscribebulk, *punsubscribebulk, *del, *rpop, *lpop,
+    *lpush, *emptyscan, *minstring, *maxstring,
+    *select[REDIS_SHARED_SELECT_CMDS],
+    *integers[REDIS_SHARED_INTEGERS],
+    *mbulkhdr[REDIS_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
+    *bulkhdr[REDIS_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
+};
+
+
+/*-----------------------------------------------------------------------------
+ * Extern declarations
+ *----------------------------------------------------------------------------*/
+extern struct redisServer server;
+extern struct sharedObjectsStruct shared;
+extern dictType setDictType;
+extern dictType zsetDictType;
+
+void decrRefCount(robj *o);
+void decrRefCountVoid(void *o);
+void incrRefCount(robj *o);
+robj *resetRefCount(robj *obj);
+void freeStringObject(robj *o);
+void freeListObject(robj *o);
+void freeSetObject(robj *o);
+void freeZsetObject(robj *o);
+void freeHashObject(robj *o);
+robj *createObject(int type, void *ptr);
+robj *createStringObject(char *ptr, size_t len);
+robj *createRawStringObject(char *ptr, size_t len);;
+robj *createEmbeddedStringObject(char *ptr, size_t len);
+robj *dupStringObject(robj *o);
+int isObjectRepresentableAsLongLong(robj *o, long long *llongval);
+robj *tryObjectEncoding(robj *o);
+robj *getDecodedObject(robj *o);
+size_t stringObjectLen(robj *o);
+robj *createStringObjectFromLongLong(long long value);
+// robj *createStringObjectFromLongDouble(long double value);
+robj *createListObject(void);
+robj *createZiplistObject(void);
+robj *createSetObject(void);
+robj *createIntsetObject(void);
+robj *createHashObject(void);
+robj *createZsetObject(void);
+robj *createZsetZiplistObject(void);
+// int getLongFromObjectOrReply(redisClient *c, robj *o, long *target, const char *msg);
+// int checkType(redisClient *c, robj *o, int type);
+// int getLongLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg);
+// int getDoubleFromObjectOrReply(redisClient *c, robj *o, double *target, const char *msg);
+// int getLongLongFromObject(robj *o, long long *target);
+// int getLongDoubleFromObject(robj *o, long double *target);
+// int getLongDoubleFromObjectOrReply(redisClient *c, robj *o, long double *target, const char *msg);
+// char *strEncoding(int encoding);
+// int compareStringObjects(robj *a, robj *b);
+// int collateStringObjects(robj *a, robj *b);
+// int equalStringObjects(robj *a, robj *b);
 
 #endif

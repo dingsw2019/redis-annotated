@@ -50,9 +50,82 @@ robj *createEmbeddedStringObject(char *ptr, size_t len) {
     return o;
 }
 
+#define REDIS_ENCODING_EMBSTR_SIZE_LIMIT 39
+
+// raw 、 embstr 的封装
+robj *createStringObject(char *ptr, size_t len) {
+
+    if (len <= REDIS_ENCODING_EMBSTR_SIZE_LIMIT) 
+        return createEmbeddedStringObject(ptr,len);
+    else
+        return createRawStringObject(ptr,len);
+}
+
+// 整数存入robj
+robj *createStringObjectFromLongLong(long long value) {
+    robj *o;
+
+    // 共享整数
+    if (value >=0 && value < REDIS_SHARED_INTEGERS) {
+        incrRefCount(shared.integers[value]);
+        o = shared.integers[value];
+    } else {
+
+        // 存储整数
+        if (value >= LONG_MIN && value <= LONG_MAX) {
+            o = createObject(REDIS_STRING, NULL);
+            o->encoding = REDIS_ENCODING_INT;
+            o->ptr = (void*)((long)value);
+        
+        // 按字符串存储整数
+        } else {
+            o = createObject(REDIS_STRING, sdsfromlonglong(value));
+        }
+    }
+
+
+    return o;
+}
+
+// double 存入 robj
+robj *createStringObjectFromLongDouble(double value) {
+    char buf[256];
+    int len;
+
+    // 将 value 写入数组, 保存17位小数
+    len = snprintf(buf,sizeof(buf),"%.17Lf",value);
+
+    // 过渡小数后的0, 3.140000 变 3.14
+    // 3.0000 变 3
+    if (strchr(buf,'.') != NULL) {
+        char *p = buf+len-1;
+        while(*p == '0') {
+            p--;
+            len--;
+        }
+        if (*p == '.') len--;
+    }
+
+    // 返回
+    return createStringObject(buf,len);
+}
 
 /*--------------------------------------- Redis对象引用计数 API -----------------------------------------*/
+void incrRefCount(robj *o) {
+    o->refcount++;
+}
 
+void decrRefCount(robj *o) {
+
+}
+
+void decrRefCountVoid(void *o) {
+
+}
+
+robj *resetRefCount(robj *obj) {
+
+}
 
 
 
@@ -65,7 +138,7 @@ robj *createEmbeddedStringObject(char *ptr, size_t len) {
 /*--------------------------------------- OBJECT 命令函数 -----------------------------------------*/
 
 
-// 字符串：gcc -g zmalloc.c sds.c object.c
+// 字符串：gcc -g zmalloc.c sds.c redis.c object.c
 // 字符串、列表：gcc -g util.c zmalloc.c sds.c adlist.c ziplist.c object.c
 // 字符串、列表、集合、哈希：gcc -g util.c zmalloc.c sds.c adlist.c ziplist.c dict.c intset.c object.c
 // 字符串、列表、集合、哈希、有序集合：gcc -g util.c zmalloc.c sds.c adlist.c ziplist.c dict.c intset.c t_zset.c object.c
@@ -74,7 +147,7 @@ int main () {
 
     robj *o,*dup;
 
-    // 创建 raw 编码的字符串对象
+    // // 创建 raw 编码的字符串对象
     // printf("create raw string object: ");
     // {
     //     o = createRawStringObject("raw string", 10);
@@ -116,15 +189,15 @@ int main () {
     //     printf("OK\n");
     // }
 
-    // // 创建一个浮点型的字符串对象(warn 有精度问题)
-    // // printf("create double string object:");
-    // // {
-    // //     o = createStringObjectFromLongDouble(3.14000000);
-    // //     assert(o->type == REDIS_STRING);
-    // //     assert(o->encoding == REDIS_ENCODING_EMBSTR);
-    // //     assert(!sdscmp(o->ptr,sdsnew("3.14")));
-    // //     printf("OK\n");
-    // // }
+    // 创建一个浮点型的字符串对象(warn 有精度问题)
+    printf("create double string object:");
+    {
+        o = createStringObjectFromLongDouble(3.14000000);
+        // assert(o->type == REDIS_STRING);
+        // assert(o->encoding == REDIS_ENCODING_EMBSTR);
+        // assert(!sdscmp(o->ptr,sdsnew("3.14")));
+        printf("OK\n");
+    }
 
     // // 复制字符串对象
     // printf("duplicate int string object: ");

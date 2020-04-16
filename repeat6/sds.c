@@ -9,7 +9,7 @@
 #include "limits.h"
 
 // 创建一个指定长度的 sds
-sds sdsnewlen(const char *init, size_t initlen)
+sds sdsnewlen(const void *init, size_t initlen)
 {
     // 申请内存空间
     struct sdshdr *sh;
@@ -145,6 +145,47 @@ sds sdscpylen(sds s,const char *t,size_t len)
 sds sdscpy(sds s,const char *t)
 {
     return sdscpylen(s,t,strlen(t));
+}
+
+#define SDS_LLSTR_SIZE 21
+int sdsll2str(char *s, long long value) {
+    char *p, aux;
+    unsigned long long v;
+    size_t l;
+
+    // 生成反方向字符串
+    v = (value < 0) ? -value : value;
+    p = s;
+    do {
+        *p++ = '0'+(v%10);
+        v /= 10;
+    } while(v);
+    if (value < 0) *p++ = '-';
+
+    // 计算字符串长度, 添加终结符
+    l = p-s;
+    *p = '\0';
+
+    // 字符串反转
+    p--;
+    while (s < p) {
+        aux = *s;
+        *s = *p;
+        *p = aux;
+        s++;
+        p--;
+    }
+
+    return l;
+}
+
+/**
+ * 将 long long 型整数转换成字符串后存入 sds
+ */
+sds sdsfromlonglong(long long value) {
+    char buf[SDS_LLSTR_SIZE];
+    int len = sdsll2str(buf, value);
+    return sdsnewlen(buf, len);
 }
 
 // 复制指定 sds 内容并创建一个 sds
