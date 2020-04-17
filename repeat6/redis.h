@@ -105,6 +105,19 @@ typedef struct zskiplist {
 
 } zskiplist;
 
+typedef struct zset {
+
+    // 字典, 键为成员, 值为分值
+    // 用于支持 O(1) 复杂度的按成员取分值操作
+    dict *dict;
+
+    // 跳跃表, 按分值排序成员
+    // 用于支持平均复杂度为 O(log N) 的按分值定位成员操作
+    // 以及范围操作
+    zskiplist *zsl;
+
+} zset;
+
 // 范围搜索器
 typedef struct zrangespec {
 
@@ -177,5 +190,21 @@ robj *createZsetZiplistObject(void);
 // int compareStringObjects(robj *a, robj *b);
 // int collateStringObjects(robj *a, robj *b);
 // int equalStringObjects(robj *a, robj *b);
+
+
+/* 跳跃表 API */
+zskiplist *zslCreate(void);
+void zslFree(zskiplist *zsl);
+zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj);
+unsigned char *zzlInsert(unsigned char *zl, robj *ele, double score);
+int zslDelete(zskiplist *zsl, double score, robj *obj);
+zskiplistNode *zslFirstInRange(zskiplist *zsl, zrangespec *range);
+zskiplistNode *zslLastInRange(zskiplist *zsl, zrangespec *range);
+double zzlGetScore(unsigned char *sptr);
+void zzlNext(unsigned char *zl, unsigned char **eptr, unsigned char **sptr);
+void zzlPrev(unsigned char *zl, unsigned char **eptr, unsigned char **sptr);
+unsigned int zsetLength(robj *zobj);
+void zsetConvert(robj *zobj, int encoding);
+unsigned long zslGetRank(zskiplist *zsl, double score, robj *o);
 
 #endif

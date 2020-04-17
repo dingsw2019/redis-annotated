@@ -88,7 +88,7 @@ robj *createStringObjectFromLongLong(long long value) {
 }
 
 // double 存入 robj
-robj *createStringObjectFromLongDouble(double value) {
+robj *createStringObjectFromLongDouble(long double value) {
     char buf[256];
     int len;
 
@@ -108,6 +108,110 @@ robj *createStringObjectFromLongDouble(double value) {
 
     // 返回
     return createStringObject(buf,len);
+}
+
+robj *dupStringObject(robj *o) {
+    robj *d;
+
+    switch(o->encoding) {
+    case REDIS_ENCODING_RAW: return createRawStringObject(o->ptr, sdslen(o->ptr));
+    case REDIS_ENCODING_EMBSTR: return createEmbeddedStringObject(o->ptr, sdslen(o->ptr));
+    case REDIS_ENCODING_INT:
+        d = createObject(REDIS_STRING, NULL);
+        d->encoding = REDIS_ENCODING_INT;
+        d->ptr = o->ptr;
+        return d;
+    default:
+        redisPanic("Wrong encoding");
+        break;
+    }
+}
+
+// 创建 LINKEDLIST 编码的列表
+robj *createListObject(void) {
+
+    list *l = listCreate();
+
+    robj *o = createObject(REDIS_LIST, l);
+
+    // myerr：缺少
+    listSetFreeMethod(l,decrRefCountVoid);
+
+    o->encoding = REDIS_ENCODING_LINKEDLIST;
+
+    return o;
+}
+
+// 创建 ZIPLIST 编码的列表
+robj *createZiplistObject(void) {
+
+    unsigned char *zl = ziplistNew();
+
+    robj *o = createObject(REDIS_LIST, zl);
+
+    o->encoding = REDIS_ENCODING_ZIPLIST;
+
+    return o;
+}
+
+// HT 编码的集合
+robj *createSetObject(void) {
+
+    dict *d = dictCreate(&setDictType, NULL);
+
+    robj *o = createObject(REDIS_SET, d);
+
+    o->encoding = REDIS_ENCODING_HT;
+
+    return o;
+}
+
+// INTSET 编码的集合
+robj *createIntsetObject(void) {
+
+    intset *is = intsetNew();
+
+    robj *o = createObject(REDIS_SET, is);
+
+    o->encoding = REDIS_ENCODING_INTSET;
+
+    return o;
+}
+
+robj *createHashObject(void) {
+
+    unsigned char *zl = ziplistNew();
+
+    robj *o = createObject(REDIS_HASH, zl);
+
+    o->encoding = REDIS_ENCODING_ZIPLIST;
+
+    return o;
+}
+
+robj *createZsetObject(void) {
+
+    zset *zs = zmalloc(sizeof(*zs));
+
+    zs->dict = dictCreate(&zsetDictType, NULL);
+    zs->zsl = zslCreate();
+
+    robj *o = createObject(REDIS_ZSET, zs);
+
+    o->encoding = REDIS_ENCODING_SKIPLIST;
+
+    return o;
+}
+
+robj *createZsetZiplistObject(void) {
+
+    unsigned char *zl = ziplistNew();
+
+    robj *o = createObject(REDIS_ZSET, zl);
+
+    o->encoding = REDIS_ENCODING_ZIPLIST;
+
+    return o;
 }
 
 /*--------------------------------------- Redis对象引用计数 API -----------------------------------------*/

@@ -430,7 +430,7 @@ int equalStringObjects(robj *a, robj *b);
 #define sdsEncodedObject(objptr) (objptr->encoding == REDIS_ENCODING_RAW || objptr->encoding == REDIS_ENCODING_EMBSTR)
 
 
-/* 压缩列表 API */
+/* 跳跃表 API */
 zskiplist *zslCreate(void);
 void zslFree(zskiplist *zsl);
 zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj);

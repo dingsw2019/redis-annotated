@@ -925,6 +925,8 @@ size_t ziplistBlobLen(unsigned char *zl) {
 }
 
 /*--------------------- debug --------------------*/
+#ifdef ZIPLIST_TEST_MAIN
+
 #include <sys/time.h>
 #include <assert.h>
 #include "adlist.h"
@@ -1557,3 +1559,5 @@ int main(void) {
 
     return 0;
 }
+
+#endif
