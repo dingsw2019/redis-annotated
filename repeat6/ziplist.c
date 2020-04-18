@@ -8,6 +8,7 @@
 #include "ziplist.h"
 #include "endianconv.h"
 // #include "redisassert.h"
+#include <assert.h>
 
 /*--------------------- private --------------------*/
 

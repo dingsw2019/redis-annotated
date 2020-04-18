@@ -349,7 +349,7 @@ void freeListObject(robj *o) {
         zfree(o->ptr);
         break;
     default:
-        // redisPanic("Unknown list encoding type");
+        redisPanic("Unknown list encoding type");
         break;
     }
 }
@@ -366,7 +366,7 @@ void freeSetObject(robj *o) {
         break;
 
     default:
-        // redisPanic("Unknown set encoding type");
+        redisPanic("Unknown set encoding type");
         break;
     }
 }
@@ -391,7 +391,7 @@ void freeZsetObject(robj *o) {
         break;
 
     default:
-        // redisPanic("Unknown sorted set encoding");
+        redisPanic("Unknown sorted set encoding");
         break;
     }
 
@@ -411,7 +411,7 @@ void freeHashObject(robj *o) {
         zfree(o->ptr);
         break;
     default:
-        // redisPanic("Unknown hash encoding type");
+        redisPanic("Unknown hash encoding type");
         break;
     }
 }
@@ -431,8 +431,7 @@ void incrRefCount(robj *o) {
 void decrRefCount(robj *o) {
 
     if (o->refcount <= 0) 
-        return ;
-        // redisPanic("decrRefCount against refcount <= 0");
+        redisPanic("decrRefCount against refcount <= 0");
 
     // 释放对象
     if (o->refcount == 1) {
@@ -442,7 +441,7 @@ void decrRefCount(robj *o) {
         case REDIS_SET: freeSetObject(o); break;
         case REDIS_ZSET: freeZsetObject(o); break;
         case REDIS_HASH: freeHashObject(o); break;
-        default: /*redisPanic("Unknown object type");*/ break;
+        default: redisPanic("Unknown object type"); break;
         }
         zfree(o);
     } else {
@@ -578,7 +577,7 @@ robj *getDecodedObject(robj *o) {
 #define REDIS_COMPARE_COLL (1<<1)
 
 /**
- * 字符串对象的值比对, 返回值通 strcmp
+ * 字符串对象的值比对, 返回值同 strcmp
  */
 int compareStringObjectsWithFlags(robj *a, robj *b, int flags) {
 

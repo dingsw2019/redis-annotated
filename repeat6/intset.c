@@ -324,9 +324,11 @@ uint32_t intsetLen(intset *is) {
     return intrev32ifbe(is->length);
 }
 
-uint32_t intsetBlobLen(intset *is) {
+size_t intsetBlobLen(intset *is) {
     return sizeof(intset)+intrev32ifbe(is->length)*intrev32ifbe(is->encoding);
 }
+
+#ifdef INTSET_TEST_MAIN
 
 /*--------------------- debug --------------------*/
 void intsetRepr(intset *is) {
@@ -542,3 +544,5 @@ int main(void) {
 
     return 0;
 }
+
+#endif

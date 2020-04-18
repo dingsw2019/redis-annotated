@@ -271,8 +271,6 @@ void listRotate(list *list) {
     tail->prev = NULL;
     tail->next = list->head;
     list->head = tail;
-
-    return list;
 }
 
 void listRewindTail(list *list, listIter *iter) {
@@ -320,6 +318,7 @@ list *listDup(list *orig) {
     return copy;
 }
 
+#ifdef ZIPLIST_TEST_MAIN
 /*----------------- debug -----------------*/
 int keyMatch(void *p1, void *p2) {
     return (strcmp(p1,p2) == 0) ? 1 : 0;
@@ -420,3 +419,4 @@ int main(void){
 
     return 0;
 }
+#endif

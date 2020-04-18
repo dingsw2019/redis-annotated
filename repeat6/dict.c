@@ -623,6 +623,7 @@ int dictDeleteNoFree(dict *d, void *key) {
     return dictGenericDelete(d, key, 1);
 }
 
+#ifdef DICT_TEST_MAIN
 /*--------------------------- debug -------------------------*/
 void dictPrintEntry(dictEntry *he) {
 
@@ -722,3 +723,5 @@ void main(void)
     // 释放字典
     dictRelease(d);
 }
+
+#endif
