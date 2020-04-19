@@ -1,4 +1,6 @@
 #include "redis.h"
+#include <math.h>
+#include <ctype.h>
 
 /*--------------------------------------- Redis对象创建及释放 API -----------------------------------------*/
 // 按类型创建一个redis对象, 并绑定值
@@ -394,6 +396,51 @@ int equalStringObjects(robj *a, robj *b) {
     }
 }
 
+// 获取 robj 的值的长度
+size_t stringObjectLen(robj *o) {
+    if (sdsEncodedObject(o)) {
+        return sdslen(o->ptr);
+    } else {
+        char buf[32];
+        return ll2string(buf, 32, (long)o->ptr);
+    }
+}
+
+int getDoubleFromObject(robj *o, double *target) {
+    double value;
+    char *eptr;
+
+    if (o == NULL) {
+        value = 0;
+    } else {
+        // 确定是字符串
+        redisAssertWithInfo(NULL, o, o->type == REDIS_STRING);
+
+        if (sdsEncodedObject(o)) {
+            errno = 0;
+            value = strtod(o->ptr, &eptr);
+
+            printf("ptr=%s,value=%Lf,eptr=%d\n",o->ptr,value, *eptr);
+            
+            if (isspace(((char*)o->ptr)[0]) ||
+                eptr[0] != '\0' ||
+                (errno == ERANGE && 
+                    (value == HUGE_VAL || value == -HUGE_VAL || value == 0)) ||
+                errno == EINVAL ||
+                isnan(value))
+                return REDIS_ERR;
+
+        } else if (o->encoding == REDIS_ENCODING_INT) {
+            value = (long)o->ptr;
+        } else {
+            redisPanic("Unknown string encoding");
+        }
+    }
+
+    *target = value;
+    return REDIS_OK;
+}
+
 /*--------------------------------------- Redis对象类型 API -----------------------------------------*/
 
 
@@ -410,126 +457,138 @@ int main () {
 
     robj *o,*dup;
 
-    // 创建 raw 编码的字符串对象
-    printf("create raw string object: ");
-    {
-        o = createRawStringObject("raw string", 10);
-        assert(o->type == REDIS_STRING);
-        assert(o->encoding == REDIS_ENCODING_RAW);
-        assert(!sdscmp(o->ptr,sdsnew("raw string")));
-        printf("OK\n");
-    }
-
-    // 创建 embstr 编码的字符串对象
-    printf("create embstr string object: ");
-    {
-        freeStringObject(o);
-        o = createEmbeddedStringObject("embstr string", 13);
-        assert(o->type == REDIS_STRING);
-        assert(o->encoding == REDIS_ENCODING_EMBSTR);
-        assert(!sdscmp(o->ptr,sdsnew("embstr string")));
-        printf("OK\n");
-    }
-
-    // 根据字符串长度, 选择 embstr 或 raw 编码的字符串对象
-    printf("create 41 bytes raw string object: ");
-    {
-        o = createStringObject("long long long long long long long string",41);
-        assert(o->type == REDIS_STRING);
-        assert(o->encoding == REDIS_ENCODING_RAW);
-        assert(!sdscmp(o->ptr,sdsnew("long long long long long long long string")));
-        printf("OK\n");
-    }
-
-    // 创建一个 int 编码的字符串对象
-    printf("create int string object: ");
-    {
-        freeStringObject(o);
-        o = createStringObjectFromLongLong(123456789);
-        assert(o->type == REDIS_STRING);
-        assert(o->encoding == REDIS_ENCODING_INT);
-        assert((long long)o->ptr == 123456789);
-        printf("OK\n");
-    }
-
-    // 创建一个浮点型的字符串对象(warn 有精度问题)
-    // printf("create double string object:");
+    // // 创建 raw 编码的字符串对象
+    // printf("create raw string object: ");
     // {
-    //     o = createStringObjectFromLongDouble(3.14000000);
+    //     o = createRawStringObject("raw string", 10);
     //     assert(o->type == REDIS_STRING);
-    //     assert(o->encoding == REDIS_ENCODING_EMBSTR);
-    //     assert(!sdscmp(o->ptr,sdsnew("3.14")));
+    //     assert(o->encoding == REDIS_ENCODING_RAW);
+    //     assert(!sdscmp(o->ptr,sdsnew("raw string")));
     //     printf("OK\n");
     // }
 
-    // 复制字符串对象
-    printf("duplicate int string object: ");
+    printf("create raw string object: ");
     {
-        dup = dupStringObject(o);
-        assert(dup->type == REDIS_STRING);
-        assert(dup->encoding == REDIS_ENCODING_INT);
-        assert((long long)dup->ptr == 123456789);
-        printf("OK\n");
+        o = createRawStringObject("10086", 5);
+        assert(o->type == REDIS_STRING);
+        assert(o->encoding == REDIS_ENCODING_RAW);
+        assert(!sdscmp(o->ptr,sdsnew("10086")));
+        double target;
+        getDoubleFromObject(o, &target);
+        printf("target = %ld\n",target);
     }
 
-    // 创建一个 list 编码的空列表对象
-    printf("create and free list list object: ");
-    {
-        o = createListObject();
-        assert(o->type == REDIS_LIST);
-        assert(o->encoding == REDIS_ENCODING_LINKEDLIST);
-        freeListObject(o);
-        printf("OK\n");
-    }
+
+    // // 创建 embstr 编码的字符串对象
+    // printf("create embstr string object: ");
+    // {
+    //     freeStringObject(o);
+    //     o = createEmbeddedStringObject("embstr string", 13);
+    //     assert(o->type == REDIS_STRING);
+    //     assert(o->encoding == REDIS_ENCODING_EMBSTR);
+    //     assert(!sdscmp(o->ptr,sdsnew("embstr string")));
+    //     printf("OK\n");
+    // }
+
+    // // 根据字符串长度, 选择 embstr 或 raw 编码的字符串对象
+    // printf("create 41 bytes raw string object: ");
+    // {
+    //     o = createStringObject("long long long long long long long string",41);
+    //     assert(o->type == REDIS_STRING);
+    //     assert(o->encoding == REDIS_ENCODING_RAW);
+    //     assert(!sdscmp(o->ptr,sdsnew("long long long long long long long string")));
+    //     printf("OK\n");
+    // }
+
+    // // 创建一个 int 编码的字符串对象
+    // printf("create int string object: ");
+    // {
+    //     freeStringObject(o);
+    //     o = createStringObjectFromLongLong(123456789);
+    //     assert(o->type == REDIS_STRING);
+    //     assert(o->encoding == REDIS_ENCODING_INT);
+    //     assert((long long)o->ptr == 123456789);
+    //     printf("OK\n");
+    // }
+
+    // // 创建一个浮点型的字符串对象(warn 有精度问题)
+    // // printf("create double string object:");
+    // // {
+    // //     o = createStringObjectFromLongDouble(3.14000000);
+    // //     assert(o->type == REDIS_STRING);
+    // //     assert(o->encoding == REDIS_ENCODING_EMBSTR);
+    // //     assert(!sdscmp(o->ptr,sdsnew("3.14")));
+    // //     printf("OK\n");
+    // // }
+
+    // // 复制字符串对象
+    // printf("duplicate int string object: ");
+    // {
+    //     dup = dupStringObject(o);
+    //     assert(dup->type == REDIS_STRING);
+    //     assert(dup->encoding == REDIS_ENCODING_INT);
+    //     assert((long long)dup->ptr == 123456789);
+    //     printf("OK\n");
+    // }
+
+    // // 创建一个 list 编码的空列表对象
+    // printf("create and free list list object: ");
+    // {
+    //     o = createListObject();
+    //     assert(o->type == REDIS_LIST);
+    //     assert(o->encoding == REDIS_ENCODING_LINKEDLIST);
+    //     freeListObject(o);
+    //     printf("OK\n");
+    // }
     
 
-    // 创建一个 ziplist 编码的空列表对象
-    printf("create and free ziplist list object: ");
-    {
-        o = createZiplistObject();
-        assert(o->type == REDIS_LIST);
-        assert(o->encoding == REDIS_ENCODING_ZIPLIST);
-        freeListObject(o);
-        printf("OK\n");
-    }
+    // // 创建一个 ziplist 编码的空列表对象
+    // printf("create and free ziplist list object: ");
+    // {
+    //     o = createZiplistObject();
+    //     assert(o->type == REDIS_LIST);
+    //     assert(o->encoding == REDIS_ENCODING_ZIPLIST);
+    //     freeListObject(o);
+    //     printf("OK\n");
+    // }
 
-    // 创建并释放 intset 的空集合对象
-    printf("create and free intset set object: ");
-    {
-        o = createIntsetObject();
-        assert(o->type == REDIS_SET);
-        assert(o->encoding == REDIS_ENCODING_INTSET);
-        freeSetObject(o);
-        printf("OK\n");
-    }
+    // // 创建并释放 intset 的空集合对象
+    // printf("create and free intset set object: ");
+    // {
+    //     o = createIntsetObject();
+    //     assert(o->type == REDIS_SET);
+    //     assert(o->encoding == REDIS_ENCODING_INTSET);
+    //     freeSetObject(o);
+    //     printf("OK\n");
+    // }
 
-    // 创建并释放一个 哈希对象
-    printf("create and free hash object: ");
-    {
-        o = createHashObject();
-        assert(o->type == REDIS_HASH);
-        assert(o->encoding == REDIS_ENCODING_ZIPLIST);
-        freeHashObject(o);
-        printf("OK\n");
-    }
+    // // 创建并释放一个 哈希对象
+    // printf("create and free hash object: ");
+    // {
+    //     o = createHashObject();
+    //     assert(o->type == REDIS_HASH);
+    //     assert(o->encoding == REDIS_ENCODING_ZIPLIST);
+    //     freeHashObject(o);
+    //     printf("OK\n");
+    // }
 
-    // 创建并释放 SKIPLIST 编码的有序集合对象
-    printf("create and free skiplist zset object: ");
-    {
-        o = createZsetObject();
-        assert(o->type == REDIS_ZSET);
-        assert(o->encoding == REDIS_ENCODING_SKIPLIST);
-        freeZsetObject(o);
-        printf("OK\n");
-    }
+    // // 创建并释放 SKIPLIST 编码的有序集合对象
+    // printf("create and free skiplist zset object: ");
+    // {
+    //     o = createZsetObject();
+    //     assert(o->type == REDIS_ZSET);
+    //     assert(o->encoding == REDIS_ENCODING_SKIPLIST);
+    //     freeZsetObject(o);
+    //     printf("OK\n");
+    // }
     
-    // 创建并释放 ZIPLIST 编码的有序集合对象
-    printf("create and free ziplist zset object: ");
-    {
-        o = createZsetZiplistObject();
-        assert(o->type == REDIS_ZSET);
-        assert(o->encoding == REDIS_ENCODING_ZIPLIST);
-        freeZsetObject(o);
-        printf("OK\n");
-    }
+    // // 创建并释放 ZIPLIST 编码的有序集合对象
+    // printf("create and free ziplist zset object: ");
+    // {
+    //     o = createZsetZiplistObject();
+    //     assert(o->type == REDIS_ZSET);
+    //     assert(o->encoding == REDIS_ENCODING_ZIPLIST);
+    //     freeZsetObject(o);
+    //     printf("OK\n");
+    // }
 }

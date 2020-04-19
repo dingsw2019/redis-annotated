@@ -50,9 +50,9 @@
 #define REDIS_ENCODING_EMBSTR 8
 
 // 报错
-#define redisAssertWithInfo(_c, _o, _e) _exit(1)
-#define redisAssert(_e) _exit(1)
-#define redisPanic(_e) _exit(1)
+#define redisAssertWithInfo(_c, _o, _e) 1 /*_exit(1)*/
+#define redisAssert(_e) 1 /*_exit(1)*/
+#define redisPanic(_e) 1 /*_exit(1)*/
 
 typedef long long mstime_t; /* 毫秒 */
 

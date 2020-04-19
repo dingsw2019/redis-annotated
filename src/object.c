@@ -677,7 +677,11 @@ int getDoubleFromObject(robj *o, double *target) {
         if (sdsEncodedObject(o)) {
             errno = 0;
             value = strtod(o->ptr, &eptr);
-            // todo 暂时不知道这是啥, 过后看
+            // isspace(((char*)o->ptr)[0]) => ptr已空白符开始, 
+            // eptr[0] != '\0'             => ptr取出整数之后还有别的字符
+            // errno == ERANGE             => value 超出程序所能表达的数值范围
+            // errno == EINVAL             => invalid argument 
+            // isnan(value)                => value非数值
             if (isspace(((char*)o->ptr)[0]) ||
                 eptr[0] != '\0' ||
                 (errno == ERANGE &&
