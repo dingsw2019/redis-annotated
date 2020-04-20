@@ -424,8 +424,7 @@ int getDoubleFromObject(robj *o, double *target) {
             
             if (isspace(((char*)o->ptr)[0]) ||
                 eptr[0] != '\0' ||
-                (errno == ERANGE && 
-                    (value == HUGE_VAL || value == -HUGE_VAL || value == 0)) ||
+                (errno == ERANGE && (value == HUGE_VAL || value == -HUGE_VAL || value == 0)) ||
                 errno == EINVAL ||
                 isnan(value))
                 return REDIS_ERR;
@@ -435,6 +434,135 @@ int getDoubleFromObject(robj *o, double *target) {
         } else {
             redisPanic("Unknown string encoding");
         }
+    }
+
+    *target = value;
+    return REDIS_OK;
+}
+
+int getDoubleFromObjectOrReply(redisClient *c, robj *o, double *target, const char *msg) {
+    double value;
+
+    if (getDoubleFromObject(o, &value) != REDIS_OK) {
+
+        if (msg != NULL) {
+            addRelyError(c, msg);
+        } else {
+            addRelyError(c, "value is not a valid float");
+        }
+        return REDIS_ERR;
+    }
+
+    *target = value;
+    return REDIS_OK;    
+}
+
+int getLongDoubleFromObject(robj *o, long double *target) {
+    long double value;
+    char *eptr;
+
+    if (o == NULL) {
+        value = 0;
+    } else {
+        redisAssertWithInfo(NULL, o, o->type == REDIS_STRING);
+
+        if (sdsEncodedObject(o)) {
+            errno = 0;
+            value = strtold(o->ptr, &eptr);
+            if (isspace(((char*)o->ptr)[0]) || eptr[0] != '\0' ||
+                errno == ERANGE || isnan(value)) {
+                    return REDIS_ERR;
+            }
+        } else if (o->encoding == REDIS_ENCODING_INT) {
+            value = (long)o->ptr;
+        } else {
+            redisPanic("Unknown string encoding");
+        }
+    }
+
+    *target = value;
+    return REDIS_OK;
+}
+
+int getLongDoubleFromObjectOrReply(redisClient *c, robj *o, long double *target, const char *msg) {
+    long double value;
+
+    if (getLongDoubleFromObject(o, &value) != REDIS_OK) {
+        if (msg != NULL) {
+            addRelyError(c, (char*)msg);
+        } else {
+            addRelyError(c, "value is not a valid float");
+        }
+
+        return REDIS_ERR;
+    }
+
+    *target = value;
+    return REDIS_OK;
+}
+
+int getLongLongFromObject(robj *o, long long *target) {
+    long long value;
+    char *eptr;
+
+    if (o == NULL) {
+        value = 0;
+
+    } else {
+
+        redisAssertWithInfo(NULL, o, o->type == REDIS_STRING);
+
+        if (sdsEncodedObject(o)) {
+            errno = 0;
+            value = strtoll(o->ptr, &eptr, 10);
+            if (isspace(((char*)o->ptr)[0]) || eptr[0] != '\0' ||
+                errno == ERANGE)
+                return REDIS_ERR;
+        
+        } else if (o->encoding == REDIS_ENCODING_HT) {
+            value = (long)o->ptr;
+
+        } else {
+            redisPanic("Unknown string object");
+        }
+    }
+
+    if (target) *target = value;
+    return REDIS_OK;
+}
+
+
+
+int getLongLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg) {
+
+    long long value;
+
+    if (getLongLongFromObject(o, &value) != REDIS_OK) {
+        if (msg != NULL) {
+            addReplyError(c, (char*)msg);
+        } else {
+            addRelyError(c, "asf");
+        }
+        return REDIS_ERR;
+    }
+
+    *target = value;
+    return REDIS_OK;
+}
+
+int getLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg) {
+    long long value;
+
+    if (getLongLongFromObjectOrReply(c, o, &value, msg) != REDIS_OK)
+        return REDIS_ERR;
+
+    if (value < LONG_MIN || value > LONG_MAX) {
+        if (msg != NULL) {
+            addRelyError(c, (char*)msg);
+        } else {
+            addRelyError(c, "value is out of range");
+        }
+        return REDIS_ERR;
     }
 
     *target = value;
