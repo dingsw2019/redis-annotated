@@ -49,6 +49,18 @@
 #define REDIS_ENCODING_SKIPLIST 7
 #define REDIS_ENCODING_EMBSTR 8
 
+/* 客户端标识标志 redisClient->flags */
+#define REDIS_MULTI (1<<3)
+
+/* 客户端阻塞状态 */
+#define REDIS_BLOCKED_NONE 0
+#define REDIS_BLOCKED_LIST 1
+#define REDIS_BLOCKED_WAIT 2
+
+/* 双端链表的方向 */
+#define REDIS_HEAD 0
+#define REDIS_TAIL 1
+
 // 报错
 #define redisAssertWithInfo(_c, _o, _e) 1 /*_exit(1)*/
 #define redisAssert(_e) 1 /*_exit(1)*/
@@ -373,7 +385,7 @@ robj *tryObjectEncoding(robj *o);
 robj *getDecodedObject(robj *o);
 size_t stringObjectLen(robj *o);
 robj *createStringObjectFromLongLong(long long value);
-// robj *createStringObjectFromLongDouble(long double value);
+robj *createStringObjectFromLongDouble(long double value);
 robj *createListObject(void);
 robj *createZiplistObject(void);
 robj *createSetObject(void);
@@ -381,7 +393,7 @@ robj *createIntsetObject(void);
 robj *createHashObject(void);
 robj *createZsetObject(void);
 robj *createZsetZiplistObject(void);
-int getLongFromObjectOrReply(redisClient *c, robj *o, long *target, const char *msg);
+int getLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg);
 int checkType(redisClient *c, robj *o, int type);
 int getLongLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg);
 int getDoubleFromObjectOrReply(redisClient *c, robj *o, double *target, const char *msg);
@@ -393,7 +405,7 @@ int compareStringObjects(robj *a, robj *b);
 int collateStringObjects(robj *a, robj *b);
 int equalStringObjects(robj *a, robj *b);
 
-#define sdsEncodedObject(objptr) (objptr->encoding = REDIS_ENCODING_EMBSTR || objptr->encoding == REDIS_ENCODING_RAW)
+#define sdsEncodedObject(objptr) (objptr->encoding == REDIS_ENCODING_EMBSTR || objptr->encoding == REDIS_ENCODING_RAW)
 
 /* 跳跃表 API */
 zskiplist *zslCreate(void);
@@ -409,5 +421,51 @@ void zzlPrev(unsigned char *zl, unsigned char **eptr, unsigned char **sptr);
 unsigned int zsetLength(robj *zobj);
 void zsetConvert(robj *zobj, int encoding);
 unsigned long zslGetRank(zskiplist *zsl, double score, robj *o);
+
+/* Core function 核心函数 */
+unsigned int getLRUClock(void);
+
+
+/* networking.c -- Networking and Client related operations 
+ * 网络模块相关的函数
+ */
+void addReplyBulk(redisClient *c, robj *obj);
+void addReply(redisClient *c, robj *obj);
+void addReplyError(redisClient *c, char *err);
+void addReplyMultiBulkLen(redisClient *c, long length);
+
+void addReplyBulkCBuffer(redisClient *c, void *p, size_t len);
+
+void addReplyLongLong(redisClient *c, long long ll);
+
+void rewriteClientCommandArgument(redisClient *c, int i, robj *newval);
+void rewriteClientCommandVector(redisClient *c, int argc, ...);
+
+/* db.c -- Keyspace access API 
+ * 数据库操作函数
+ */
+void setExpire(redisDb *db, robj *key, long long when);
+robj *lookupKeyRead(redisDb *db, robj *key);
+robj *lookupKeyWrite(redisDb *db, robj *key);
+robj *lookupKeyWriteOrReply(redisClient *c, robj *key, robj *reply);
+robj *lookupKeyReadOrReply(redisClient *c, robj *key, robj *reply);
+void dbAdd(redisDb *db, robj *key, robj *val);
+int dbDelete(redisDb *db, robj *key);
+void dbOverwrite(redisDb *db, robj *key, robj *val);
+void setKey(redisDb *db, robj *key, robj *val);
+
+robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o);
+
+void signalModifiedKey(redisDb *db, robj *key);
+void signalFlushedDb(int dbid);
+
+
+/* Keyspace events notification */
+void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid);
+int keyspaceEventsStringToFlags(char *classes);
+sds keyspaceEventsFlagsToString(int flags);
+
+/* 阻塞客户端的方法 */
+void blockClient(redisClient *c, int btype);
 
 #endif

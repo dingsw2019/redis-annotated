@@ -50,4 +50,7 @@ sds sdsMakeRoomFor(sds s,size_t addlen);
 
 sds sdsRemoveFreeSpace(sds s);
 
+sds sdscpy(sds s,const char *t);
+sds sdscpylen(sds s,const char *t,size_t len);
+
 #endif

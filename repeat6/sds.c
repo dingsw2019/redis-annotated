@@ -33,6 +33,10 @@ sds sdsnewlen(const void *init, size_t initlen)
     return (char*)sh->buf;
 }
 
+sds sdsempty(void){
+    return sdsnewlen("",0);
+}
+
 // 创建一个sds
 sds sdsnew(const char *init)
 {

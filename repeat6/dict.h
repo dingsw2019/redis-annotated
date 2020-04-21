@@ -122,6 +122,12 @@ typedef struct dictIterator {
 // 计算哈希值
 #define dictHashKey(d,key) (d)->type->hashFunction(key)
 
+// 返回节点的键
+#define dictGetKey(he) ((he)->key)
+
+// 返回节点的值
+#define dictGetVal(he) ((he)->v.val)
+
 // 已用节点数量
 #define dictSize(d) ((d)->ht[0].used + (d)->ht[1].used)
 
