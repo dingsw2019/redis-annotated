@@ -342,6 +342,80 @@ robj *resetRefCount(robj *obj) {
 
 /*--------------------------------------- Redis字符串对象值的相关函数 -----------------------------------------*/
 
+int isObjectRepresentableAsLongLong(robj *o, long long *llval) {
+
+    if (o->encoding == REDIS_ENCODING_INT) {
+        if (llval) *llval = (long) o->ptr;
+        return REDIS_OK;
+    } else {
+        return string2ll(o->ptr, sdslen(o->ptr), llval) ? REDIS_OK : REDIS_ERR;
+    }
+}
+
+robj *tryObjectEncoding(robj *o) {
+    long value;
+    sds s = o->ptr;
+    size_t len;
+
+    // embstr, raw才处理
+    if (!sdsEncodedObject(o)) return o;
+
+    len = sdslen(s);
+    // 内容是整数, 转换成int编码
+    if (len <= 21 && string2l(s,len,&value)) {
+
+        // 共享整数
+        if (value >=0 && value < REDIS_SHARED_INTEGERS) {
+            decrRefCount(o);
+            incrRefCount(shared.integers[value]);
+            return shared.integers[value];
+
+        } else {
+            if (o->encoding == REDIS_ENCODING_RAW) sdsfree(o->ptr);
+            o->encoding = REDIS_ENCODING_INT;
+            o->ptr = (void*)value;
+            return o;
+        }
+    }
+
+    // raw编码, 长度小于 39, 转换成embstr编码
+    if (len <= REDIS_ENCODING_EMBSTR_SIZE_LIMIT) {
+        robj *emb;
+        if (o->encoding == REDIS_ENCODING_EMBSTR) return o;
+        emb = createEmbeddedStringObject(s, sdslen(s));
+        decrRefCount(o);
+        return emb;
+    }
+
+    // raw编码, 压缩闲置空间
+    if (o->encoding == REDIS_ENCODING_RAW && sdsavail(s) > len/10) {
+        o->ptr = sdsRemoveFreeSpace(o->ptr);
+    }
+
+    return o;
+}
+
+// 将int编码的值转换成embstr或raw编码
+robj *getDecodedObject(robj *o) {
+    robj *dec;
+
+    if (sdsEncodedObject(o)) {
+        incrRefCount(o);
+        return o;
+    }
+
+    if (o->type == REDIS_STRING && o->encoding == REDIS_ENCODING_INT) {
+        char buf[32];
+
+        ll2string(buf,32,(long)o->ptr);
+        dec = createStringObject(buf, strlen(buf));
+        return dec;
+
+    } else {
+        redisPanic("Unknown encoding type");
+    }
+}
+
 #define REDIS_COMPARE_BINARY (1<<0)
 #define REDIS_COMPARE_COLL (1<<1)
 
@@ -531,8 +605,6 @@ int getLongLongFromObject(robj *o, long long *target) {
     return REDIS_OK;
 }
 
-
-
 int getLongLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg) {
 
     long long value;
@@ -571,6 +643,29 @@ int getLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const c
 
 /*--------------------------------------- Redis对象类型 API -----------------------------------------*/
 
+int checkType(redisClient *c, robj *o, int type) {
+
+    if (o->type != type) {
+        addReply(c, shared.wrongtypeerr);
+        return 1;
+    }
+
+    return 0;
+}
+
+char *strEncoding(int encoding) {
+    switch(encoding) {
+    case REDIS_ENCODING_RAW: return "raw";
+    case REDIS_ENCODING_INT: return "int";
+    case REDIS_ENCODING_HT: return "hashtable";
+    case REDIS_ENCODING_LINKEDLIST: return "linkedlist";
+    case REDIS_ENCODING_ZIPLIST: return "ziplist";
+    case REDIS_ENCODING_INTSET: return "intset";
+    case REDIS_ENCODING_SKIPLIST: return "skiplist";
+    case REDIS_ENCODING_EMBSTR: return "embstr";
+    default: return "unknown";
+    }
+}
 
 /*--------------------------------------- OBJECT 命令函数 -----------------------------------------*/
 
