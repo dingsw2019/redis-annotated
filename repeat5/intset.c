@@ -294,6 +294,8 @@ intset *intsetRemove(intset *is, int64_t value, int *success) {
     return is;
 }
 
+#ifdef INTSET_TEST_MAIN
+
 /*--------------------- debug --------------------*/
 void intsetRepr(intset *is) {
     int i;
@@ -509,4 +511,4 @@ int main(void) {
     return 0;
 }
 
-// #endif
+#endif

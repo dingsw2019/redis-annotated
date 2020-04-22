@@ -102,7 +102,7 @@ int _dictClear(dict *d, dictht *ht,void (callback)(void *))
 }
 
 // 释放字典
-void *dictRelease(dict *d)
+void dictRelease(dict *d)
 {
     // 重置 0 号哈希表
     _dictClear(d,&d->ht[0],NULL);
@@ -267,7 +267,7 @@ int dictAdd(dict *d,void *key,void *val)
 
 // 查找节点
 // 找到返回 节点，否则返回 NULL
-dictEntry *dictFind(dict *d,void *key)
+dictEntry *dictFind(dict *d,const void *key)
 {
     unsigned long h,idx,table;
     dictEntry *he;
@@ -462,13 +462,13 @@ int dictGenericDelete(dict *d,const void *key,int nofree)
 
 // 删除节点,并释放节点
 // 删除成功返回 1, 未找到返回 0
-int dictDelete(dict *d,void *key)
+int dictDelete(dict *d,const void *key)
 {
     return dictGenericDelete(d,key,0);
 }
 
 // 删除节点, 不释放节点
-int dictDeleteNoFree(dict *d,void *key)
+int dictDeleteNoFree(dict *d,const void *key)
 {
     return dictGenericDelete(d,key,1);
 }
@@ -632,7 +632,7 @@ int dictRehash(dict *d,int n)
     return 1;
 }
 
-
+#ifdef DICT_TEST_MAIN
 /* ------------------- debug -------------------- */
 void dictPrintEntry(dictEntry *he){
     keyObject *k = (keyObject*)he->key;
@@ -735,3 +735,4 @@ void main(void)
     dictRelease(d);
 
 }
+#endif

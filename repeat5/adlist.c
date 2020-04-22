@@ -166,7 +166,7 @@ listNode *listNext(listIter *iter){
 }
 
 // 表尾节点移动到表头
-list *listRotate(list *list){
+void listRotate(list *list){
 
     listNode *tail = list->tail;
 
@@ -181,8 +181,6 @@ list *listRotate(list *list){
     // 表头指针变更
     list->head->prev = tail;
     list->head = tail;
-
-    return list;
 }
 
 // 匹配 value
@@ -267,7 +265,7 @@ void listDelNode(list *list,listNode *node){
     list->len--;
 }
 
-listNode *listIndex(list *list,int index){
+listNode *listIndex(list *list,long index){
 
     listNode *n;
     // 负数转正数
@@ -305,6 +303,7 @@ void printList(list *list){
     listReleaseIterator(iter);
 }
 
+#ifdef ADLIST_TEST_MAIN
 //gcc -g zmalloc.c adlist.c
 int main(void){
 
@@ -390,3 +389,4 @@ int main(void){
 
     return 0;
 }
+#endif

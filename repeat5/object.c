@@ -542,6 +542,7 @@ int getLongDoubleFromObject(robj *o, long double *target) {
         redisAssertWithInfo(NULL, o, o->type == REDIS_STRING);
 
         if (sdsEncodedObject(o)) {
+
             errno = 0;
             value = strtold(o->ptr, &eptr);
             if (isspace(((char*)o->ptr)[0]) || eptr[0] != '\0' ||
@@ -622,7 +623,6 @@ int getLongLongFromObjectOrReply(redisClient *c, robj *o, long long *target, con
     *target = value;
     return REDIS_OK;
 }
-
 int getLongFromObjectOrReply(redisClient *c, robj *o, long long *target, const char *msg) {
     long long value;
 
@@ -724,7 +724,7 @@ void objectCommand(redisClient *c) {
     }
 }
 
-#ifdef OBJECT_TEST_MAIN
+//#ifdef OBJECT_TEST_MAIN
 
 #include <assert.h>
 
@@ -880,7 +880,8 @@ int main () {
         assert(o->encoding == REDIS_ENCODING_RAW);
         assert(!sdscmp(o->ptr,sdsnew("1008610010")));
         long double target;
-        getLongDoubleFromObject(o, &target);
+        int a;
+        a = getLongDoubleFromObject(o, &target);
         assert(target==1008610010);
         printf("OK\n");
     }
@@ -946,4 +947,4 @@ int main () {
     }
 }
 
-#endif
+//#endif

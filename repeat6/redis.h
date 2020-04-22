@@ -433,7 +433,7 @@ void addReplyBulk(redisClient *c, robj *obj);
 void addReply(redisClient *c, robj *obj);
 void addReplyError(redisClient *c, char *err);
 void addReplyMultiBulkLen(redisClient *c, long length);
-
+void addReplyBulkCString(redisClient *c, char *s);
 void addReplyBulkCBuffer(redisClient *c, void *p, size_t len);
 
 void addReplyLongLong(redisClient *c, long long ll);

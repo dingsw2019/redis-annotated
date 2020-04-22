@@ -9,7 +9,7 @@
 #include "limits.h"
 
 // 创建一个 sds 字符串
-sds sdsnewlen(const char *init, size_t initlen) {
+sds sdsnewlen(const void *init, size_t initlen) {
 
     struct sdshdr *sh;
     // 申请 sdshdr 内存空间
@@ -120,7 +120,7 @@ sds sdscpy(sds s, const char *t) {
 }
 
 // sds 后追加字符串
-sds sdscatlen(sds s, const char *t, size_t len) {
+sds sdscatlen(sds s, const void *t, size_t len) {
 
     struct sdshdr *sh;
     // 当前字符串长度
@@ -241,6 +241,67 @@ int sdscmp(sds s1, sds s2) {
     return cmp;
 }
 
+// 回收 free 空间
+sds sdsRemoveFreeSpace(sds s) {
+    struct sdshdr *sh = (void*)(s-(sizeof(struct sdshdr)));
+
+    sh = zrealloc(sh, sizeof(struct sdshdr)+sh->len+1);
+    sh->free = 0;
+
+    return sh->buf;
+}
+
+/**
+ * long long 型整数转换成字符串
+ * 所需要的数组长度
+ */
+#define SDS_LLSTR_SIZE 21
+
+/**
+ * 将 value 转换成字符串, 存入 *s 指针中
+ * 返回字符串的长度
+ */
+int sdsll2str(char *s, long long value) {
+    char *p, aux;
+    unsigned long long v;
+    size_t l;
+
+    // 生成反方向字符串
+    v = (value < 0) ? -value : value;
+    p = s;
+    do {
+        *p++ = '0'+(v%10);
+        v /= 10;
+    } while(v);
+    if (value < 0) *p++ = '-';
+
+    // 计算字符串长度, 添加终结符
+    l = p-s;
+    *p = '\0';
+
+    // 字符串反转
+    p--;
+    while (s < p) {
+        aux = *s;
+        *s = *p;
+        *p = aux;
+        s++;
+        p--;
+    }
+
+    return l;
+}
+
+/**
+ * 将 long long 型整数转换成字符串后存入 sds
+ */
+sds sdsfromlonglong(long long value) {
+    char buf[SDS_LLSTR_SIZE];
+    int len = sdsll2str(buf, value);
+    return sdsnewlen(buf, len);
+}
+
+#ifdef SDS_TEST_MAIN
 
 //执行: gcc -g zmalloc.c testhelp.h sds.c
 //执行: ./a.exe
@@ -371,3 +432,5 @@ int main(void){
 
     return 0;
 }
+
+#endif

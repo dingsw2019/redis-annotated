@@ -824,7 +824,7 @@ size_t ziplistBlobLen(unsigned char *zl) {
     return intrev32ifbe(ZIPLIST_BYTES(zl));
 }
 
-
+#ifdef ZIPLIST_TEST_MAIN
 /*--------------------- debug --------------------*/
 #include <sys/time.h>
 #include "adlist.h"
@@ -1457,3 +1457,5 @@ int main(void) {
 
     return 0;
 }
+
+#endif
