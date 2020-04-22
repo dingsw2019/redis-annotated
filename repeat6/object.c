@@ -221,20 +221,6 @@ void freeStringObject(robj *o) {
     if (o->encoding == REDIS_ENCODING_RAW) {
         sdsfree(o->ptr);
     }
-
-    // todo 
-    switch(o->encoding) {
-    case REDIS_ENCODING_RAW:
-        
-        break;
-
-    case REDIS_ENCODING_ZIPLIST:
-
-        break;
-    default:
-        redisPanic("Unknown list encoding type");
-        break;
-    }
 }
 
 void freeListObject(robj *o) {
@@ -357,8 +343,6 @@ robj *tryObjectEncoding(robj *o) {
     sds s = o->ptr;
     size_t len;
 
-    // printf("try ptr=%s,len=%d, encoding=%d, free=%d, raw=%d\n",s, len,o->encoding,sdsavail(s),REDIS_ENCODING_RAW);
-    // printf("try-1 encoding=%d\n",o->encoding);
     // embstr, raw才处理
     if (!sdsEncodedObject(o)) return o;
 
@@ -464,7 +448,7 @@ int compareStringObjects(robj *a, robj *b) {
 
 int equalStringObjects(robj *a, robj *b) {
 
-    if (a->encoding == REDIS_ENCODING_INT ||
+    if (a->encoding == REDIS_ENCODING_INT &&
         b->encoding == REDIS_ENCODING_INT) {
 
         return a->ptr == b->ptr;
