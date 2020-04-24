@@ -153,3 +153,149 @@ int getGenericCommand(redisClient *c) {
 void getCommand(redisClient *c) {
     getGenericCommand(c);
 }
+
+// GETSET key value
+void getsetCommand(redisClient *c) {
+    robj *o;
+
+    // 获取 key 的值并返回给客户端
+    if (getGenericCommand(c) == REDIS_ERR) return;
+
+    // 压缩 value
+    c->argv[2] = tryObjectEncoding(c->argv[2]);
+
+    // 写入 value
+    setKey(c->db,c->argv[1],c->argv[2]);
+
+    // 更新键修改次数
+    server.dirty++;
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "set", c->argv[1], c->db->id);
+}
+
+// SETRANGE key offset value
+void setrangeCommand(redisClient *c) {
+    long offset;
+    robj *o;
+    sds value = c->argv[3]->ptr;
+
+    // 提取 offset
+    if (getLongFromObjectOrReply(c, c->argv[2], &offset, NULL) != REDIS_OK)
+        return;
+    
+    if (offset <= 0) {
+        addReplyError(c, "offset is out of range");
+        return;
+    }
+
+    // 获取 key 的值
+    o = lookupKeyWrite(c->db, c->argv[1]);
+    // 新增值
+    if (o == NULL) {
+
+        // 确定 value 长度
+        if (sdslen(value) == 0) {
+            addReply(c,shared.czero);
+            return;
+        }
+
+        // 确定 value 填充的字符串长度不会超过限制
+        if (checkStringLength(c, offset+sdslen(value)) != REDIS_OK) {
+            return;
+        }
+
+        // 创建空sdshdr, 创建字符串对象
+        o = createObject(REDIS_STRING, sdsempty());
+        dbAdd(c->db, c->argv[1], o);
+    // 编辑值
+    } else {
+        size_t olen;
+
+        // 原 value 对象类型判断
+        if (checkType(c, o, REDIS_STRING))
+            return;
+
+        // 获取原 value 的长度
+        olen = stringObjectLen(o);
+
+        // 检查 value 长度是否大于 0
+        if (sdslen(value) == 0) {
+            addReplyLongLong(c, olen);
+            return;
+        }
+
+        // 检查 value 填充字符串是否会超过长度限制
+        if (checkStringLength(c, offset+sdslen(value)) != REDIS_OK) {
+            return;
+        }
+
+        // 修改 kv 映射关系
+        o = dbUnshareStringValue(c->db, c->argv[1], o);
+    }
+
+    // 将 value 写入值对象
+    if (sdslen(value) > 0) {
+
+        // 空白符填充长度
+        o->ptr = sdsgrowzero(o->ptr, offset+sdslen(value));
+        
+        // value 拷贝
+        memcpy((char*)o->ptr+offset, value, sdslen(value));
+
+        // 更新键变更次数
+        server.dirty++;
+
+        // 值变更通知
+        signalModifiedKey(c->db, c->argv[1]);
+
+        // 发出事件通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "setrange", c->argv[1], c->db->id);
+    }
+
+    // 回复客户端值长度
+    addReplyLongLong(c, sdslen(o->ptr));
+}
+
+// GETRANGE key start end
+void getrangeCommand(redisClient *c) {
+    long start, end;
+    char *str, llbuf[32];
+    size_t strlen;
+    robj *o;
+
+    // 提取 start, end 值
+    if (getLongFromObjectOrReply(c,c->argv[2],&start,NULL) != REDIS_OK)
+        return;
+    if (getLongFromObjectOrReply(c,c->argv[3],&end,NULL) != REDIS_OK)
+        return;
+
+    // 提取 key 的值
+    if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.emptybulk)) == NULL ||
+        checkType(c, o, REDIS_STRING)) {
+        return;
+    }
+
+    // 值的长度和内容
+    if (o->encoding == REDIS_ENCODING_INT) {
+        str = llbuf;
+        strlen = ll2string(llbuf, sizeof(llbuf), (long)o->ptr);
+    } else {
+        str = o->ptr;
+        strlen = sdslen(o->ptr);
+    }
+
+    // 转换 start, end
+    if (start < 0) start += strlen;
+    if (end < 0) end += strlen;
+    if (start < 0) start = 0;
+    if (end < 0) end = 0;
+    if ((unsigned)end >= strlen) end = strlen-1;
+
+    // 回复客户端
+    if (start > end) {
+        addReply(c,shared.emptybulk);
+    } else {
+        addReplyBulkCBuffer(c, (char*)str+start, end-start+1);
+    }
+}
