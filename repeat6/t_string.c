@@ -332,7 +332,7 @@ void msetGenericCommand(redisClient *c, int nx) {
      
     // 参数不是奇数, 说明缺少参数
     if (c->argc % 2 == 0) {
-        addReply(c, "wrong number of arguments for MSET");
+        addReplyError(c, "wrong number of arguments for MSET");
         return;
     }
 
