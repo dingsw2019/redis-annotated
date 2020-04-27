@@ -218,3 +218,108 @@ void listTypeInsert(listTypeEntry *entry, robj *value, int where) {
         redisPanic("Unknown list encoding");
     }
 }
+
+// 从指定方向弹出一个元素, 并将元素值以 robj 结构返回
+robj *listTypePop(robj *subject, int where) {
+    robj *value;
+
+
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST) {
+        int pos = (where == REDIS_HEAD) ? 0 : -1;
+        unsigned char *p = ziplistIndex((char*)subject->ptr, pos);
+        char *vstr;
+        unsigned int vlen;
+        long long vlong;
+        if (ziplistGet(p,&vstr,&vlen,&vlong)) {
+            if (vstr) {
+                value = createStringObject((char*)vstr,vlen);
+            } else {
+                value = createStringObjectFromLongLong(vlong);
+            }
+            subject->ptr = ziplistDelete(subject->ptr, &p);
+        }
+
+    } else if (subject->encoding == REDIS_ENCODING_LINKEDLIST) {
+        list *list = subject->ptr;
+        listNode *ln;
+        if (where == REDIS_HEAD) {
+            ln = listFirst(list);
+        } else {
+            ln = listLast(list);
+        }
+
+        if (ln != NULL) {
+            value = listNodeValue(ln);
+            incrRefCount(value);
+            listDelNode(list,ln);
+        }
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+    return value;
+}
+
+// 删除当前节点, 并处理迭代器指向的节点
+void listTypeDelete(listTypeEntry *entry) {
+
+    listTypeIterator *li = entry->li;
+
+    if (li->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *p = entry->zi;
+        li->subject->ptr = ziplistDelete(li->subject->ptr, &p);
+        if (li->direction == REDIS_TAIL) {
+            li->zi = p;
+        } else {
+            li->zi = ziplistPrev(li->subject->ptr, p);
+        }
+
+    } else if (li->encoding == REDIS_ENCODING_LINKEDLIST) {
+        listNode *next;
+
+        if (li->direction == REDIS_TAIL) {
+            next = li->ln->next;
+        } else {
+            next = li->ln->prev;
+        }
+
+        listDelNode(li->subject->ptr, entry->ln);
+        li->ln = next;
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+}
+
+// 比对值
+int listTypeEqual(listTypeEntry *entry, robj *o) {
+
+    listTypeIterator *li = entry->li;
+
+    if (li->encoding == REDIS_ENCODING_ZIPLIST) {
+        redisAssertWithInfo(NULL, o, sdsEncodedObject(o));
+        return ziplistCompare(entry->zi, o->ptr, sdslen(o->ptr));
+
+    } else if (li->encoding == REDIS_ENCODING_LINKEDLIST) {
+        return equalStringObjects(o, listNodeValue(entry->ln));
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+}
+
+unsigned long listTypeLength(robj *subject) {
+
+
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST) {
+        return ziplistLen(subject->ptr);
+
+    } else if (subject->encoding == REDIS_ENCODING_LINKEDLIST) {
+        return listLength((list*)subject->ptr);
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+}
