@@ -14,10 +14,10 @@ listTypeIterator *listTypeInitIterator(robj *subject, long index, unsigned char 
     li->direction = direction;
 
     if (li->encoding == REDIS_ENCODING_ZIPLIST) {
-        li->zi = ziplistIndex(li->subject->ptr, index);
+        li->zi = ziplistIndex(subject->ptr, index);
 
     } else if (li->encoding == REDIS_ENCODING_LINKEDLIST) {
-        li->ln = listIndex(li->subject->ptr, index);
+        li->ln = listIndex(subject->ptr, index);
 
     } else {
         redisPanic("Unknown list encoding");
@@ -62,7 +62,6 @@ int listTypeNext(listTypeIterator *li, listTypeEntry *entry) {
 
     } else {
         redisPanic("Unknown list encoding");
-        return;
     }
 
     return 0;
@@ -74,10 +73,12 @@ robj *listTypeGet(listTypeEntry *entry) {
     robj *value = NULL;
 
     if (li->encoding == REDIS_ENCODING_ZIPLIST) {
-        redisAssert(entry->zi != NULL);
         unsigned char *vstr;
         unsigned int vlen;
         long long vlong;
+
+        redisAssert(entry->zi != NULL);
+
         if (ziplistGet(entry->zi, &vstr, &vlen, &vlong)) {
 
             if (vstr) {
@@ -94,8 +95,126 @@ robj *listTypeGet(listTypeEntry *entry) {
 
     } else {
         redisPanic("Unknown list encoding");
-        return;   
     }
 
     return value;
+}
+
+/*----------------------- 编码转换 ------------------------*/
+// 编码转换, subject是列表, enc 是要转换的编码
+void listTypeConvert(robj *subject, int enc) {
+    listTypeIterator *li;
+    listTypeEntry entry;
+
+    redisAssertWithInfo(NULL, subject, subject->type == REDIS_LIST);
+
+    if (enc == REDIS_ENCODING_LINKEDLIST) {
+
+        list *l = listCreate();
+
+        listSetFreeMethod(l, decrRefCountVoid);
+
+        // 遍历元素, 将所有元素移动到列表中
+        li = listTypeInitIterator(subject, 0, REDIS_TAIL);
+        while(listTypeNext(li,&entry)) listAddNodeTail(l, listTypeGet(&entry));
+        listTypeReleaseIterator(li);
+
+        // 变更编码
+        subject->encoding = REDIS_ENCODING_LINKEDLIST;
+
+        // 释放原结构
+        zfree(subject->ptr);
+
+        // 挂载新结构
+        subject->ptr = l;
+    } else {
+        redisPanic("Unsupported list conversion");
+    }
+}
+
+// 编码转换控制, ziplist编码的单元素长度超过 64字节时, 转换编码
+void listTypeTryConversion(robj *subject, robj *value) {
+
+    if (subject->encoding != REDIS_ENCODING_ZIPLIST) return;
+
+    if (sdsEncodedObject(value) &&
+        sdslen(value) > server.list_max_ziplist_value) {
+        
+        listTypeConvert(subject,REDIS_ENCODING_LINKEDLIST);
+    }
+}
+
+/*----------------------- 基础数据操作函数 ------------------------*/
+
+void listTypePush(robj *subject, robj *value, int where) {
+
+    // 尝试转码
+    listTypeTryConversion(subject, value);
+
+    // 元素超过限制, 转码
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST && 
+        ziplistLen(subject->ptr) >= server.list_max_ziplist_entries) {
+            listTypeConvert(subject, REDIS_ENCODING_LINKEDLIST);
+    }
+
+    // ziplist
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST) {
+        int pos = (where == REDIS_TAIL) ? ZIPLIST_TAIL : ZIPLIST_HEAD;
+        // 将 value 解码, 统一变成字符串格式
+        value = getDecodedObject(value);
+        // 添加
+        ziplistPush(subject->ptr, value->ptr, sdslen(value->ptr), pos);
+        // 释放 value
+        decrRefCount(value);
+
+    // linkedlist
+    } else if (subject->encoding == REDIS_ENCODING_LINKEDLIST) {
+
+        // 添加
+        if (where == REDIS_TAIL) {
+            listAddNodeTail(subject->ptr, value);
+        } else {
+            listAddNodeHead(subject->ptr, value);
+        }
+        // 增加 value 引用计数
+        incrRefCount(value);
+    
+    // 未知编码
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+}
+
+// 指定元素之前或之后添加元素
+void listTypeInsert(listTypeEntry *entry, robj *value, int where) {
+
+    robj *subject = entry->li->subject;
+
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST) {
+        value = getDecodedObject(value);
+
+        if (where == REDIS_TAIL) {
+
+            unsigned char *next = ziplistNext(subject->ptr, entry->zi);
+            if (next == NULL) {
+                ziplistPush(subject->ptr, value->ptr, sdslen(value->ptr), REDIS_TAIL);
+            } else {
+                ziplistInsert(subject->ptr, next, value->ptr,sdslen(value->ptr));
+            }
+        } else {
+             ziplistInsert(subject->ptr, entry->zi, value->ptr,sdslen(value->ptr));
+        }
+        decrRefCount(value);
+
+    } else if (subject->encoding == REDIS_ENCODING_LINKEDLIST) {
+        if (where == REDIS_TAIL) {
+            listInsertNode(subject->ptr,entry->ln,value->ptr,AD_START_TAIL);
+        } else {
+            listInsertNode(subject->ptr,entry->ln,value->ptr,AD_START_HEAD);
+        }
+        incrRefCount(value);
+
+    } else {
+        redisPanic("Unknown list encoding");
+    }
 }
