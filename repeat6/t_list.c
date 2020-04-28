@@ -323,3 +323,63 @@ unsigned long listTypeLength(robj *subject) {
     }
 
 }
+
+/*----------------------- List 命令函数 ------------------------*/
+
+// push 的通用函数
+void pushGenericCommand(redisClient *c, int where) {
+    int j, waiting = 0, pushed = 0;
+    // 获取值对象
+    robj *lobj = lookupKeyWrite(c->db, c->argv[1]);
+
+    int may_have_waiting_clients = (lobj == NULL);
+
+    // 检查值类型
+    if (lobj && lobj->type != REDIS_LIST) {
+        addReply(c, shared.wrongtypeerr);
+        return;
+    }
+
+    if (may_have_waiting_clients) signalListAsReady(c, c->argv[1]);
+
+    // 添加元素
+    for (j=2; j<c->argc; j++) {
+
+        // 如果值对象不存在, 创建一个
+        if (!lobj) {
+            lobj = createZiplistObject();
+            dbAdd(c->db, c->argv[1], lobj);
+        }
+
+        // 添加元素
+        c->argv[j] = tryObjectEncoding(c->argv[j]);
+        listTypePush(lobj, c->argv[j], where);
+
+        // 记录添加的元素数量
+        pushed++;
+    }
+
+    // 回复客户端添加元素数量
+    addReplyLongLong(c, waiting + (lobj ? listTypeLength(lobj) : 0));
+
+    // 发送通知
+    if (pushed) {
+        char *event = (where == REDIS_HEAD) ? "lpush" : "rpush";
+
+        // 键改通知
+        signalModifiedKey(c->db, c->argv[1]);
+        // 事件通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_LIST, event, c->argv[1], c->db->id);
+    }
+
+    // 键改次数
+    server.dirty += pushed;
+}
+
+void lpushCommand(redisClient *c) {
+    pushGenericCommand(c, REDIS_HEAD);
+}
+
+void rpushCommand(redisClient *c) {
+    pushGenericCommand(c, REDIS_TAIL);
+}

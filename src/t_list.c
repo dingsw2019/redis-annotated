@@ -456,12 +456,12 @@ void pushGenericCommand(redisClient *c, int where) {
     for (j=2; j<c->argc; j++) {
 
         // 压缩节点值剩余空间
-        c->argv[j] = getDecodedObject(c->argv[j]);
+        c->argv[j] = tryObjectEncoding(c->argv[j]);
 
         // 如果列表键不存在, 创建一个
         if (!lobj) {
             lobj = createZiplistObject();
-            dbAdd(c->db, c->argv[1], c->argv[j]);
+            dbAdd(c->db, c->argv[1], lobj);
         }
 
         // 添加节点
