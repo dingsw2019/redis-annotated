@@ -256,3 +256,229 @@ void getrangeCommand(redisClient *c) {
         addReplyBulkCBuffer(c, (char*)str+start, (end-start)+1);
     }
 }
+
+// MGET key [key ...]
+void mgetCommand(redisClient *c) {
+    robj *o;
+    int j;
+
+    addReplyMultiBulkLen(c, c->argc-1);
+    for (j=1; j<c->argc; j++) {
+
+        o = lookupKeyRead(c->db, c->argv[j]);
+
+        if (o == NULL) {
+            addReply(c,shared.nullbulk);
+        } else {
+
+            if (o->encoding != REDIS_STRING) {
+                addReply(c,shared.wrongtypeerr);
+            } else {
+                addReplyBulk(c,o);
+            }
+        }
+    }
+}
+
+// MSET key value [key value ...]
+// MSETNX key value [key value ...]
+void msetGenericCommand(redisClient *c, int nx) {
+    int j, busykey = 0;
+
+    // 偶数的参数数量, 参数错误, 返回
+    if (c->argc % 2 == 0) {
+        addReplyError(c, "wrong number of arguments for MSET");
+        return;
+    }
+
+    // nx 检查, 存在一个值 , 报错返回
+    if (nx) {
+        for (j=1; j<c->argc; j+=2) {
+            if (lookupKeyRead(c->db, c->argv[j]) != NULL) {
+                busykey++;
+            }
+
+            if (busykey) {
+                addReply(c, shared.czero);
+                return;
+            }
+        }
+    }
+
+    // 写入值对象
+    for (j=1; j<c->argc; j+=2) {
+
+        c->argv[j+1] = tryObjectEncoding(c->argv[j+1]);
+
+        setKey(c->db, c->argv[j], c->argv[j+1]);
+
+        // 发送通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_STRING,"set",c->argv[j],c->db->id);
+    }
+
+    // 更新键改次数
+    server.dirty += (c->argc-1)/2;
+
+    addReply(c, nx ? shared.cone : shared.ok);
+}
+
+void msetCommand(redisClient *c) {
+    msetGenericCommand(c, 0);
+}
+
+void msetnxCommand(redisClient *c) {
+    msetGenericCommand(c, 1);
+}
+
+void incrDecrCommand(redisClient *c, long long incr) {
+    robj *o, *new;
+    long long value, old_value;
+
+    // 提取值对象和整数值
+    o = lookupKeyWrite(c->db, c->argv[1]);
+    if (o != NULL && checkType(c, o, REDIS_STRING)) return;
+
+    if (getLongLongFromObjectOrReply(c, o, &value, NULL) != REDIS_OK) {
+        return;
+    }
+
+    // 边界检查
+    old_value = value;
+    if ((incr < 0 && old_value < 0 && incr < (LLONG_MIN - old_value)) ||
+        (incr > 0 && old_value > 0 && incr > (LLONG_MAX - old_value))) {
+        
+        addReplyError(c, "increment or decrement would overflow");
+        return;
+    }
+
+    value += incr;
+    new = createStringObjectFromLongLong(value);
+    // 编辑
+    if (o) {
+        dbOverwrite(c->db, c->argv[1], new);
+
+    // 新增
+    } else {
+        dbAdd(c->db, c->argv[1], new);
+    }
+
+    signalModifiedKey(c->db, c->argv[1]);
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_STRING,"incrby",c->argv[1],c->db->id);
+
+    server.dirty++;
+
+    addReply(c,shared.colon);
+    addReply(c,new);
+    addReply(c,shared.crlf);
+}
+
+void incrCommand(redisClient *c) {
+    incrDecrCommand(c,1);
+}
+
+void decrCommand(redisClient *c) {
+    incrDecrCommand(c,-1);
+}
+
+void incrbyCommand(redisClient *c) {
+    long long incr;
+    if (getLongLongFromObjectOrReply(c,c->argv[2],&incr,NULL) == NULL)
+        return;
+    incrDecrCommand(c,incr);
+}
+
+void decrbyCommand(redisClient *c) {
+    long long incr;
+    if (getLongLongFromObjectOrReply(c,c->argv[2],&incr,NULL) == NULL)
+        return;
+    incrDecrCommand(c,-incr);
+}
+
+// INCRBYFLOAT key increment
+void incrbyfloatCommand(redisClient *c) {
+    robj *o, *new, *aux;
+    long double value, incr;
+
+    // 提取值对象和浮点值
+    o = lookupKeyWrite(c->db,c->argv[1]);
+    if (o != NULL && o->type != REDIS_STRING) return;
+
+    // 提取 incr
+    if (getLongDoubleFromObjectOrReply(c, o, &value,NULL) != REDIS_OK || 
+        getLongDoubleFromObjectOrReply(c, c->argv[2], &incr, NULL) != REDIS_OK) {
+        return ;
+    }
+
+    value += incr;
+    if (isnan(value) || isinf(value)) {
+        addReplyError(c,"increment would produce NaN or Infinity");
+        return;
+    }
+    new = createStringObjectFromLongDouble(value);
+    // 编辑
+    if (o) {
+        dbOverwrite(c->db, c->argv[1], new);
+
+    // 新增
+    } else {
+        dbAdd(c->db, c->argv[1], new);
+    }
+
+    signalModifiedKey(c->db, c->argv[1]);
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_STRING, "incrbyfloat", c->argv[1], c->db->id);
+
+    server.dirty++;
+
+    addReplyBulk(c,new);
+
+    aux = createStringObject("SET",3);
+    rewriteClientCommandArgument(c,0,aux);
+    decrRefCount(aux);
+    rewriteClientCommandArgument(c,2,new);
+}
+
+void appendCommand(redisClient *c) {
+    robj *o, *append;
+    size_t totlen;
+
+    // 提取值对象
+    o = lookupKeyWrite(c->db, c->argv[1]);
+    if (o != NULL && o->type != REDIS_STRING) return;
+
+
+    // 编辑
+    if (o) {
+        append = tryObjectEncoding(c->argv[2]);
+        totlen = sdslen(append->ptr) + stringObjectLen(o);
+        if (checkStringLength(c, totlen) != REDIS_OK) 
+            return;
+        dbUnshareStringValue(c->db, c->argv[1],append);
+        o->ptr = sdscatlen(o->ptr, append->ptr, sdslen(append->ptr));
+        totlen = sdslen(o->ptr);
+
+    // 新增
+    } else {
+        c->argv[2] = tryObjectEncoding(c->argv[2]);
+        incrRefCount(c->argv[2]);
+        dbAdd(c->db, c->argv[1], c->argv[2]);
+        totlen = stringObjectLen(c->argv[2]);
+    }
+
+    signalModifiedKey(c->db, c->argv[1]);
+    notifyKeyspaceEvent(REDIS_NOTIFY_STRING,"append",c->argv[1],c->db->id);
+    server.dirty++;
+
+    addReplyLongLong(c,totlen);
+}
+
+void strlenCommand(redisClient *c) {
+    robj *o;
+
+    if (lookupKeyReadOrReply(c, c->argv[1], shared.nullbulk) == NULL ||
+        checkType(c, o, REDIS_STRING))
+        return;
+    
+    addReplyLongLong(c,stringObjectLen(o));
+}
