@@ -372,7 +372,7 @@ void incrDecrCommand(redisClient *c, long long incr) {
     if (o != NULL && checkType(c, o, REDIS_STRING)) return;
 
     // 从值对象中提取原值
-    if (getLongLongFromObjectOrReply(o, &value, NULL) != REDIS_OK)
+    if (getLongLongFromObjectOrReply(c, o, &value, NULL) != REDIS_OK)
         return;
 
     // 溢出检查
