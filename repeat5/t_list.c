@@ -650,6 +650,7 @@ void lrangeCommand(redisClient *c) {
     if (start < 0) start += llen;
     if (end < 0) end += llen;
     if (start < 0) start = 0;
+
     if (start > end || start >= llen) {
         addReply(c,shared.emptymultibulk);
         return;
@@ -690,6 +691,195 @@ void lrangeCommand(redisClient *c) {
 
     } else {
         redisPanic("Unknow list encoding");
+    }
+
+}
+
+// LTRIM key start stop
+void ltrimCommand(redisClient *c) {
+    robj *o;
+    long start, end, llen, j, ltrim, rtrim;
+    list *list;
+    listNode *ln;
+
+    // 获取值对象
+    o = lookupKeyWriteOrReply(c, c->argv[1], shared.ok);
+    if (o == NULL || checkType(c,o,REDIS_LIST)) return;
+
+    // 获取索引
+    if (getLongFromObjectOrReply(c,c->argv[1],&start,NULL) != REDIS_OK ||
+        getLongFromObjectOrReply(c,c->argv[2],&end,NULL) != REDIS_OK)
+        return;
+
+    llen = listTypeLength(o);
+
+    // 负索引转正索引
+    if (start < 0) start += llen;
+    if (end < 0) end += llen;
+    if (start < 0) start = 0;
+    
+    // 左右删除的距离
+    if (start > end || start > llen) {
+        ltrim = llen;
+        rtrim = 0;
+    } else {
+        if (end > llen) end = llen-1;
+        ltrim = start;
+        rtrim = llen - end -1;
+    }
+
+    // 截取元素
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+
+        o->ptr = ziplistDeleteRange(o->ptr, 0, ltrim);
+
+        o->ptr = ziplistDeleteRange(o->ptr, -rtrim,rtrim);
+
+    } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
+        list = o->ptr;
+
+        for (j=0; j<ltrim; j++){
+            ln = listFirst(list);
+            listDelNode(o->ptr,ln);
+        }
+
+        for (j=0; j<rtrim; j++) {
+            ln = listLast(list);
+            listDelNode(o->ptr,ln);
+        }
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_LIST,"ltrim",c->argv[1],c->db->id);
+
+    if (listTypeLength(o) == 0) {
+        notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
+        dbDelete(c->db,c->argv[1]);
+    }
+
+    signalModifiedKey(c->db,c->argv[1]);
+
+    server.dirty++;
+
+    addReply(c,shared.ok);
+}
+
+// LREM key count value
+void lremCommand(redisClient *c) {
+    robj *subject,*obj;
+    long removed = 0, toremove;
+    listTypeEntry entry;
+
+    // 目标元素
+    obj = c->argv[3] = tryObjectEncoding(c->argv[3]);
+
+    // 获取值对象
+    subject = lookupKeyWriteOrReply(c,c->argv[1],shared.czero);
+    if (subject == NULL || checkType(c,subject,REDIS_LIST)) return;
+
+    // 提取 count
+    if (getLongFromObjectOrReply(c,c->argv[2],&toremove,NULL) != REDIS_OK)
+        return;
+
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST)
+        obj = getDecodedObject(obj);
+
+    // 获取迭代列表, 计算删除数量
+    listTypeIterator *li;
+    if (toremove < 0) {
+        toremove = -toremove;
+        li = listTypeInitIterator(subject,-1,REDIS_HEAD);
+    } else {
+        li = listTypeInitIterator(subject,0,REDIS_TAIL);
+    }
+
+    // 迭代删除
+    while (listTypeNext(li,&entry)) {
+        if (listTypeEqual(&entry, obj)) {
+            removed++;
+            server.dirty++;
+            listTypeDelete(&entry);
+            
+            if (toremove && toremove == removed) break;
+        }
+    }
+
+    listTypeReleaseIterator(li);
+
+    if (subject->encoding == REDIS_ENCODING_ZIPLIST)
+        decrRefCount(obj);
+
+    // 空列表, 删除 kv 关联关系
+    if (listTypeLength(subject) == 0) {
+        dbDelete(c->db,c->argv[1]);
+    }
+
+    addReplyLongLong(c,removed);
+
+    if (removed) signalModifiedKey(c->db,c->argv[1]);
+}
+
+void rpoplpushHandlePush(redisClient *c, robj *dstkey, robj *dstobj, robj *value) {
+
+    if (!dstobj) {
+        dstobj = createZiplistObject();
+        dbAdd(c->db,dstkey,dstobj);
+        signalListAsReady(c,dstkey);
+    }
+
+    signalModifiedKey(c->db,dstkey);
+
+    listTypePush(dstobj,value,REDIS_HEAD);
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_LIST,"lpush",dstkey,c->db->id);
+
+    addReplyBulk(c,value);
+}
+
+// BRPOPLPUSH source destination timeout
+void rpoplpushCommand(redisClient *c) {
+    robj *sobj, *value;
+
+    // 提取源列表值对象
+    if ((sobj = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,sobj,REDIS_LIST)) return;
+
+    // 源列表为空
+    if (listTypeLength(sobj) == 0) {
+        addReply(c,shared.nullbulk);
+    
+    } else {
+        
+        // 目标列表值对象
+        robj *dobj = lookupKeyWrite(c->db,c->argv[2]);
+        robj *touchedkey = c->argv[1];
+
+        if (dobj && checkType(c,dobj, REDIS_LIST)) return;
+
+       // 源列表弹出元素
+       value = listTypePop(sobj,REDIS_TAIL);
+
+       incrRefCount(touchedkey);
+
+       // 目标列表添加元素
+       rpoplpushHandlePush(c, c->argv[2], dobj, value);
+
+       decrRefCount(value);
+
+       notifyKeyspaceEvent(REDIS_NOTIFY_LIST,"rpop",touchedkey,c->db->id);
+
+       if (listTypeLength(sobj) == 0) {
+           dbDelete(c->db,touchedkey);
+           notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",touchedkey,c->db->id);
+       }
+
+       signalModifiedKey(c->db,touchedkey);
+
+       decrRefCount(touchedkey);
+
+       server.dirty++;
+
     }
 
 }
