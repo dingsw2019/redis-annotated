@@ -43,6 +43,11 @@ void addReplyBulkCString(redisClient *c, char *s) {
 
 }
 
+void addReplyBulkLongLong(redisClient *c, long long ll) {
+    
+}
+
+
 /**
  * 回复客户端一个整数
  * 格式：10086\r\n

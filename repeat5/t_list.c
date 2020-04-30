@@ -523,3 +523,174 @@ void lindexCommand(redisClient *c) {
         redisPanic("Unknown list encoding");
     }
 }
+
+// LSET key index value
+void lsetCommand(redisClient *c) {
+    long index;
+
+    // 获取值对象
+    robj *o = lookupKeyWriteOrReply(c,c->argv[1],shared.nokeyerr);
+    if (o == NULL && checkType(c,o,REDIS_LIST)) return;
+
+    if (getLongFromObjectOrReply(c,c->argv[2],&index,NULL) != REDIS_OK)
+        return;
+
+    // 获取 value 值
+    robj *value = tryObjectEncoding(c->argv[2]);
+
+    listTypeTryConversion(o->ptr,value);
+
+    // ziplist
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *p;
+
+        // 查找 index 的元素
+        p = ziplistIndex(o->ptr, index);
+
+        if (p == NULL) {
+            addReply(c,shared.outofrangeerr);
+
+        } else {
+
+            // 删除元素
+            o->ptr = ziplistDelete(o->ptr, &p);
+
+            // 添加新元素
+            value = getDecodedObject(value);
+            o->ptr = ziplistInsert(o->ptr, p, value->ptr, sdslen(value->ptr));
+            decrRefCount(value);
+
+            addReply(c, shared.ok);
+            signalModifiedKey(c->db, c->argv[1]);
+            notifyKeyspaceEvent(REDIS_NOTIFY_LIST, "lset", c->argv[1], c->db->id);
+            server.dirty++;
+        }
+
+
+    // linkedlist
+    } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
+
+        listNode *ln = listIndex(o->ptr, index);
+        if (ln == NULL) {
+            addReply(c, shared.outofrangeerr);
+
+        } else {
+            decrRefCount((robj*)listNodeValue(ln));
+            listNodeValue(ln) = value;
+            incrRefCount(value);
+
+            addReply(c,shared.ok);
+            signalModifiedKey(c->db,c->argv[1]);
+            notifyKeyspaceEvent(REDIS_NOTIFY_LIST,"lset",c->argv[1],c->db->id);
+            server.dirty++;
+            
+        }
+    } else {
+        redisPanic("Unkonwn list encoding");
+    }
+        
+}
+
+void popGenericCommand(redisClient *c, int where) {
+    robj *o, *value;
+    
+    // 获取值对象, 值对象不存在返回
+    if ((o == lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,o,REDIS_LIST)) return;
+
+    // 弹出元素
+    value = listTypePop(o->ptr, where);
+
+    if (value == NULL) {
+        addReply(c,shared.nullbulk);
+
+    } else {
+        char *event = (where == REDIS_HEAD) ? "lpop" : "rpop";
+
+        addReplyBulk(c,value);
+        decrRefCount(value);
+        // 发出通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_LIST,event,c->argv[1],c->db->id);
+
+        // 如果列表为空, 删除 kv 关联关系
+        if (listTypeLength(o) == 0) {
+            notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
+            dbDelete(c->db,c->argv[1]);
+        }
+        signalModifiedKey(c->db,c->argv[1]);
+        // 更新键改次数
+        server.dirty++;
+    }
+}
+
+void lpopCommand(redisClient *c) {
+    popGenericCommand(c,REDIS_HEAD);
+}
+
+void rpopCommand(redisClient *c) {
+    popGenericCommand(c,REDIS_TAIL);
+}
+
+// LRANGE key start stop
+void lrangeCommand(redisClient *c) {
+    long start,end;
+
+    // 获取值对象
+    robj *o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk);
+    if (o == NULL || checkType(c,o,REDIS_LIST)) return;
+
+    // 获取索引
+    if (getLongFromObjectOrReply(c, c->argv[2], &start,NULL) != REDIS_OK || 
+        getLongFromObjectOrReply(c, c->argv[2], &end,NULL) != REDIS_OK) 
+        return;
+    
+    long llen = listTypeLength(o);
+
+    // 负索引转正索引
+    if (start < 0) start += llen;
+    if (end < 0) end += llen;
+    if (start < 0) start = 0;
+    if (start > end || start >= llen) {
+        addReply(c,shared.emptymultibulk);
+        return;
+    }
+
+    if (end >= llen) end = llen-1;
+    long rangelen = (end-start)+1;
+
+    addReplyMultiBulkLen(c,rangelen);
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *p = ziplistIndex(o->ptr, start);
+        unsigned char *vstr;
+        unsigned int vlen;
+        long long vlong;
+
+        while (rangelen--) {
+            if (ziplistGet(p,&vstr,&vlen,&vlong)) {
+                if (vstr) {
+                    addReplyBulkCBuffer(c,vstr,vlen);
+                } else {
+                    addReplyBulkLongLong(c,vlong);
+                }
+            }
+            p = ziplistNext(o->ptr,p);
+        }
+
+    } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
+        
+        listNode *ln;
+        if (start > llen/2) start -= llen;
+        ln = listIndex(o->ptr, start);
+
+        while(rangelen--) {
+            addReplyBulk(c,ln->value);
+            ln = ln->next;
+        }
+
+    } else {
+        redisPanic("Unknow list encoding");
+    }
+
+}
+
