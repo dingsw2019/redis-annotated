@@ -155,6 +155,30 @@ typedef struct {
     
 } listTypeEntry;
 
+/*
+ * 哈希对象的迭代器
+ */
+typedef struct {
+
+    // 被迭代的哈希对象
+    robj *subject;
+
+    // 哈希对象的编码
+    int encoding;
+
+    // 域指针和值指针
+    // 在迭代 ZIPLIST 编码的哈希对象时使用
+    unsigned char *fptr, *vptr;
+
+    // 字典迭代器和指向当前迭代字典节点的指针
+    // 在迭代 HT 编码的哈希对象时使用
+    dictIterator *di;
+    dictEntry *de;
+} hashTypeIterator;
+
+#define REDIS_HASH_KEY 1
+#define REDIS_HASH_VALUE 2
+
 // todo 暂时简化
 // #define LRU_CLOCK() ((1000/server.hz <= REDIS_LRU_CLOCK_RESOLUTION) ? server.lruclock : getLRUClock())
 #define LRU_CLOCK() (getLRUClock())
