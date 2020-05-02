@@ -272,8 +272,14 @@ struct redisServer {
     // 最近一次 SAVE 后, 数据库被修改的次数
     long long dirty;
 
-    size_t list_max_ziplist_value;
+    size_t hash_max_ziplist_entries;
+    size_t hash_max_ziplist_value;
     size_t list_max_ziplist_entries;
+    size_t list_max_ziplist_value;
+    size_t set_max_intset_entries;
+    size_t zset_max_ziplist_entries;
+    size_t zset_max_ziplist_value;
+    size_t hll_sparse_max_bytes;
 
     // 用于 BLPOP, BRPOP, BRPOPLPUSH 
     list *ready_keys;
@@ -294,6 +300,14 @@ struct sharedObjectsStruct {
     *mbulkhdr[REDIS_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
     *bulkhdr[REDIS_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
 };
+
+/* Log levels */
+#define REDIS_DEBUG 0
+#define REDIS_VERBOSE 1
+#define REDIS_NOTICE 2
+#define REDIS_WARNING 3
+#define REDIS_LOG_RAW (1<<10) /* Modifier to log without timestamp */
+#define REDIS_DEFAULT_VERBOSITY REDIS_NOTICE
 
 /*--------------------- 压缩列表 -----------------------*/
 
@@ -410,6 +424,7 @@ extern struct redisServer server;
 extern struct sharedObjectsStruct shared;
 extern dictType setDictType;
 extern dictType zsetDictType;
+extern dictType hashDictType;
 
 /* Redis 对象实现 */
 void decrRefCount(robj *o);
