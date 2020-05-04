@@ -308,7 +308,7 @@ int hashTypeGetFromZiplist(robj *o, robj *field,
 
     // 提取值内容
     if (vptr != NULL) {
-        ret = ziplistGet(vptr,*vstr,*vlen,*vll);
+        ret = ziplistGet(vptr,vstr,vlen,vll);
         redisAssert(ret);
         return 0;
     }
