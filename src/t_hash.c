@@ -181,7 +181,7 @@ void hashTypeConvertZiplist(robj *o, int enc) {
         int ret;
 
         // 迭代器
-        hi = hashTypeInitIterator(o->ptr);
+        hi = hashTypeInitIterator(o);
 
         // 创建空哈希表
         dict = dictCreate(&hashDictType,NULL);

@@ -43,6 +43,38 @@ dictType zsetDictType = {
     NULL                       /* val destructor */
 };
 
+dictType hashDictType = {
+    NULL,            /* dictEncObjHash hash function */
+    NULL,                      /* key dup */
+    NULL,                      /* val dup */
+    NULL,      /* dictEncObjKeyCompare key compare */
+    NULL,                      /* dictRedisObjectDestructor key destructor */
+    NULL                       /* val destructor */
+};
+
+/* Keylist hash table type has unencoded redis objects as keys and
+ * lists as values. It's used for blocking operations (BLPOP) and to
+ * map swapped keys to a list of clients waiting for this keys to be loaded. */
+dictType keylistDictType = {
+    NULL,            /* dictEncObjHash hash function */
+    NULL,                      /* key dup */
+    NULL,                      /* val dup */
+    NULL,      /* dictEncObjKeyCompare key compare */
+    NULL,                      /* dictRedisObjectDestructor key destructor */
+    NULL                       /* val destructor */
+};
+
+/* Cluster nodes hash table, mapping nodes addresses 1.2.3.4:6379 to
+ * clusterNode structures. */
+dictType clusterNodesDictType = {
+    NULL,            /* dictEncObjHash hash function */
+    NULL,                      /* key dup */
+    NULL,                      /* val dup */
+    NULL,      /* dictEncObjKeyCompare key compare */
+    NULL,                      /* dictRedisObjectDestructor key destructor */
+    NULL                       /* val destructor */
+};
+
 /**
  * 返回微秒格式的 UNIX 时间
  * 1 秒 = 1 000 000 微妙
