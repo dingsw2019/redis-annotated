@@ -480,7 +480,7 @@ void listRotate(list *list){
     list->head = tail;
 }
 
-#ifdef ADLIST_TEST_MAIN
+// #ifdef ADLIST_TEST_MAIN
 /**
  * 字符串 str1 与 str2 是否相等
  * 
@@ -493,12 +493,13 @@ int keyMatch(void *str1,void *str2){
 
 // 打印链表的所有节点
 void printList(list *li) {
-    printf("li size is %d, elements:", listLength(li));
+
+    printf("{total bytes %d} {length %d}\n",sizeof(*li),listLength(li));
     listIter iter;
     listNode *node;
     listRewind(li, &iter);
     while ((node = listNext(&iter)) != NULL) {
-        printf("%s ", (char*)node->value);
+        printf("%s,bytes:%d\n", (char*)node->value,sizeof(*node));
     }
     printf("\n");
 }
@@ -506,85 +507,89 @@ void printList(list *li) {
 //gcc -g zmalloc.c adlist.c
 int main(void){
 
-    char b[][10] = {"believe", "it", "or", "not"};
+    // char b[][500] = {"believeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "it", "or", "not"};
+    // char b[][100] = {4294967296, -100, 100, 128000, "non integer", "much much longer non integer"};
     listIter iter;
     listNode *node;
     list *li = listCreate();
 
+    listAddNodeHead(li, (void*)4294967296);
+    listAddNodeHead(li, (void*)-100);
+
     // 表头添加，结果：li size is 4, elements:not or it believe
-    for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
-        listAddNodeHead(li, b[i]);
-    }
+    // for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
+    //     listAddNodeHead(li, b[i]);
+    // }
     printf("listAddNodeHead : ");
     printList(li);
 
-    listRelease(li);
-    li = listCreate();
-    // 表尾添加, 结果：li size is 4, elements:believe it or not
-    for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
-        listAddNodeTail(li, b[i]);
-    }
-    printf("listAddNodeTail : ");
-    printList(li);
+    // listRelease(li);
+    // li = listCreate();
+    // // 表尾添加, 结果：li size is 4, elements:believe it or not
+    // for (int i = 0; i < sizeof(b)/sizeof(*b); ++i) {
+    //     listAddNodeTail(li, b[i]);
+    // }
+    // printf("listAddNodeTail : ");
+    // printList(li);
 
-    printf("search a key :");
-    listSetMatchMethod(li, keyMatch);
-    listNode *ln = listSearchKey(li, "it");
-    if (ln != NULL) {
-        printf("find key is :%s\n", (char*)ln->value);
-    } else {
-        printf("not found\n");
-    }
+    // printf("search a key :");
+    // listSetMatchMethod(li, keyMatch);
+    // listNode *ln = listSearchKey(li, "it");
+    // if (ln != NULL) {
+    //     printf("find key is :%s\n", (char*)ln->value);
+    // } else {
+    //     printf("not found\n");
+    // }
 
-    // 插入节点
-    li = listInsertNode(li,ln,"insert1",1);
-    printList(li);
+    // // 插入节点
+    // li = listInsertNode(li,ln,"insert1",1);
+    // printList(li);
 
-    // 插入头节点
-    printf("head insert node: ");
-    ln = listSearchKey(li,"believe");
-    li = listInsertNode(li,ln,"insertHead",0);
-    printList(li);
+    // // 插入头节点
+    // printf("head insert node: ");
+    // ln = listSearchKey(li,"believe");
+    // li = listInsertNode(li,ln,"insertHead",0);
+    // printList(li);
 
-    // 删除节点
-    printf("del node : ");
-    listDelNode(li,ln);
-    printList(li);
+    // // 删除节点
+    // printf("del node : ");
+    // listDelNode(li,ln);
+    // printList(li);
 
-    // 删除头节点
-    printf("del head node : ");
-    ln = listSearchKey(li,"insertHead");
-    listDelNode(li,ln);
-    printList(li);
+    // // 删除头节点
+    // printf("del head node : ");
+    // ln = listSearchKey(li,"insertHead");
+    // listDelNode(li,ln);
+    // printList(li);
 
-    // 索引搜索节点
-    ln = listIndex(li,-1);
-    if (ln) {
-        printf("listIndex : %s \n",ln->value);
-    } else {
-        printf("listIndex : NULL");
-    }
+    // // 索引搜索节点
+    // ln = listIndex(li,-1);
+    // if (ln) {
+    //     printf("listIndex : %s \n",ln->value);
+    // } else {
+    //     printf("listIndex : NULL");
+    // }
 
-    // 表尾变表头
-    listRotate(li);
-    printList(li);
+    // // 表尾变表头
+    // listRotate(li);
+    // printList(li);
 
-    // 反转链表
-    printf("reverse output the list : ");
-    printf("li size is %d, elements:", listLength(li));
-    listRewindTail(li, &iter);
-    while ((node = listNext(&iter)) != NULL) {
-        printf("%s ", (char*)node->value);
-    }
-    printf("\n");
+    // // 反转链表
+    // printf("reverse output the list : ");
+    // printf("li size is %d, elements:", listLength(li));
+    // listRewindTail(li, &iter);
+    // while ((node = listNext(&iter)) != NULL) {
+    //     printf("%s ", (char*)node->value);
+    // }
+    // printf("\n");
 
-    // 复制链表
-    printf("duplicate a new list : ");
-    list *lidup = listDup(li);
-    printList(lidup);
+    // // 复制链表
+    // printf("duplicate a new list : ");
+    // list *lidup = listDup(li);
+    // printList(lidup);
 
-    listRelease(li);
+    // listRelease(li);
 
     return 0;
 }
-#endif
+// #endif

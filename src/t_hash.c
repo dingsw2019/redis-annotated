@@ -558,3 +558,147 @@ unsigned long hashTypeLength(robj *o) {
 
     return length;
 }
+
+/**
+ * 按 key 查找并返回哈希对象
+ * 如果对象不存在, 那么创建一个哈希对象并返回
+ */
+robj *hashTypeLookupWriteOrCreate(redisClient *c, robj *key) {
+    robj *o = lookupKeyWrite(c->db, key);
+
+    // 新增
+    if (o == NULL) {
+        o = createHashObject();
+        dbAdd(c->db, key, o);
+
+    // 类型检查
+    } else {
+        if (o->type != REDIS_HASH) {
+            addReply(c, shared.wrongtypeerr);
+            return NULL;
+        }
+    }
+
+    return o;
+}
+
+
+/*----------------------------- 命令 ------------------------------*/
+
+// HSET key field value
+void hsetCommand(redisClient *c) {
+    int update;
+    robj *o;
+
+    // 取出或创建哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c, c->argv[1])) == NULL) return;
+
+    // 尝试是否需要转码
+    hashTypeTryConversion(o,c->argv,2,3);
+
+    // 将 field 和 value 转换成字符串结构
+    hashTypeTryObjectEncoding(o,&c->argv[2],&c->argv[3]);
+
+    // 添加元素
+    update = hashTypeSet(o,c->argv[2],c->argv[3]);
+
+    // 回复客户端, 新增回复 1, 更新回复 0
+    addReply(c, update ? shared.czero : shared.cone);
+
+    // 发送键改信号
+    signalModifiedKey(c->db,c->argv[1]);
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hset",c->argv[1],c->db->id);
+
+    // 更新键改次数
+    server.dirty++;
+}
+
+// HSETNX key field value
+void hsetnxCommand(redisClient *c) {
+    robj *o;
+
+    // 取出或创建哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+
+    // 尝试转码
+    hashTypeTryConversion(o,c->argv,2,3);
+
+    // 如果 field-value 已存在, 回复客户端 0
+    if (hashTypeExists(o,c->argv[2])) {
+        addReply(c,shared.czero);
+        return;
+    
+    // 添加元素
+    } else {
+
+        // 将 field, value 转换成字符串
+        hashTypeTryObjectEncoding(o,&c->argv[2],&c->argv[3]);
+
+        // 添加 field-value
+        hashTypeSet(o,c->argv[2],c->argv[3]);
+
+        // 回复客户端 1,, 表示设置成功
+        addReply(c,shared.cone);
+
+        // 发送键改通知
+        signalModifiedKey(c->db,c->argv[1]);
+
+        // 发送事件通知
+        notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hset",c->argv[1],c->db->id);
+
+        // 更新键改次数
+        server.dirty++;
+    }
+}
+
+// HMSET key field value [field value ...]
+void hmsetCommand(redisClient *c) {
+    int i;
+    robj *o;
+
+    // 参数数量检查
+    if (c->argc % 2 == 1) {
+        addReplyError(c,"wrong number of arguments for HMSET");
+        return;
+    }
+
+    // 取出或创建哈希结构
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+
+    // 尝试转码检查
+    hashTypeTryConversion(o,c->argv,2,c->argc-1);
+
+    // 添加元素
+    for (i = 2; i < c->argc; i += 2) {
+
+        // 将 field , value转换成字符串
+        hashTypeTryObjectEncoding(o,&c->argv[i],&c->argv[i+1]);
+
+        // 添加元素到哈希
+        hashTypeSet(o,c->argv[i],c->argv[i+1]);
+    }
+
+    // 回复客户端成功
+    addReply(c,shared.ok);
+    
+    // 发送键改通知
+    signalModifiedKey(c->db,c->argv[1]);
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hset",c->argv[1],c->db->id);
+
+    // 更新键改次数
+    server.dirty++;
+}
+
+// HINCRBY key field increment
+void hincrbyCommand(redisClient *c) {
+
+}
+
+// HINCRBYFLOAT key field increment
+void hincrbyfloatCommand(redisClient *c) {
+
+}
