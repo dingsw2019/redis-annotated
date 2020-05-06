@@ -695,10 +695,115 @@ void hmsetCommand(redisClient *c) {
 
 // HINCRBY key field increment
 void hincrbyCommand(redisClient *c) {
+    long long value, incr, oldvalue;
+    robj *o, *current, *new;
 
+    // 提取 incr
+    if (getLongLongFromObjectOrReply(c,c->argv[3],&incr,NULL) != REDIS_OK)
+        return;
+
+    // 取出或创建哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL)
+        return;
+
+    // 提取 field 的值
+    if ((current = hashTypeGetObject(o,c->argv[2])) != NULL) {
+        if (getLongLongFromObjectOrReply(c,current,&value,
+            "hash value is not an integer") != REDIS_OK) {
+            decrRefCount(current);
+            return;
+        }
+        decrRefCount(current);
+    } else {
+        value = 0;
+    }
+
+    // 检查值是否溢出
+    oldvalue = value;
+    if (incr < 0 && oldvalue < 0 && incr < (LLONG_MIN - oldvalue) ||
+        incr > 0 && oldvalue > 0 && incr > (LLONG_MAX - oldvalue)) {
+
+        addReplyError(c,"increment or decrement would overflow");
+        return;
+    }
+
+    // 创建新值的 robj 对象
+    value += incr;
+    new = createStringObjectFromLongLong(value);
+
+    // 将 field 转换成字符串
+    hashTypeTryObjectEncoding(o,&c->argv[2],NULL);
+
+    // 写入新值
+    hashTypeSet(o,c->argv[2],new);
+
+    // 释放新值的 robj 对象
+    decrRefCount(new);
+
+    // 回复客户端
+    addReplyLongLong(c,value);
+
+    // 发送键改信号
+    signalModifiedKey(c->db,c->argv[1]);
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hincrby",c->argv[1],c->db->id);
+
+    // 更新键改次数
+    server.dirty++;
 }
 
 // HINCRBYFLOAT key field increment
 void hincrbyfloatCommand(redisClient *c) {
+    double long value, incr;
+    robj *o, *current, *new, *aux;
 
+    // 提取 incr
+    if (getLongDoubleFromObjectOrReply(c,c->argv[3],&incr,NULL) != REDIS_OK)
+        return;
+
+    // 取出或创建哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL)
+        return;
+
+    // 提取 field 的值
+    if ((current = hashTypeGetObject(o,c->argv[2])) != NULL) {
+        if (getLongDoubleFromObjectOrReply(c,current,&value,
+            "hash value is not a valid float") != REDIS_OK) {
+            decrRefCount(current);
+            return;
+        }
+        decrRefCount(current);
+    } else {
+        value = 0;
+    }
+
+    // 创建新的值对象
+    value += incr;
+    new = createStringObjectFromLongDouble(value);
+
+    // 将 field 改成字符串结构
+    hashTypeTryObjectEncoding(o,&c->argv[2],NULL);
+
+    // 写入值对象
+    hashTypeSet(o,c->argv[2],new);
+    
+    // 回复客户端
+    addReplyBulk(c,new);
+
+    // 发送键改信号
+    signalModifiedKey(c->db,c->argv[1]);
+
+    // 发送事件通知
+    notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hincrbyfloat",c->argv[1],c->db->id);
+
+    // 更新键改次数
+    server.dirty++;
+
+    aux = createStringObject("HSET",4);
+    rewriteClientCommandArgument(c,0,aux);
+    decrRefCount(aux);
+    rewriteClientCommandArgument(c,3,new);
+    decrRefCount(new);
+    decrRefCount(new);
 }

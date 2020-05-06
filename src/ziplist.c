@@ -1414,6 +1414,7 @@ void ziplistRepr(unsigned char *zl) {
 
 // gcc -g zmalloc.c sds.c util.c ziplist.c
 int main(void) {
+
     unsigned char *zl, *p;
     unsigned char *entry;
     unsigned int elen;
