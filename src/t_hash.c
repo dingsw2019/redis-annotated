@@ -929,3 +929,125 @@ void hdelCommand(redisClient *c) {
 
     addReplyLongLong(c,deleted);
 }
+
+// HLEN key
+void hlenCommand(redisClient *c) {
+    robj *o;
+
+    // 取出哈希对象
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    addReplyLongLong(c,hashTypeLength(o));
+}
+
+/**
+ * 从迭代器当前指向的节点中取出 fiele 或 value
+ * 并回复给客户端
+ */
+static void addHashIteratorCursorToReply(redisClient *c, hashTypeIterator *hi, int what) {
+
+    if (hi->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *vstr = NULL;
+        unsigned int vlen = UINT_MAX;
+        long long vll = LLONG_MAX;
+
+        hashTypeCurrentFromZiplist(hi,what,&vstr,&vlen,&vll);
+
+        if (vstr) {
+            addReplyBulkCBuffer(c,vstr,vlen);
+        } else {
+            addReplyLongLong(c,vll);
+        }
+
+
+    } else if (hi->encoding == REDIS_ENCODING_HT) {
+        robj *value;
+
+        hashTypeCurrentFromHashTable(hi,what,&value);
+
+        addReplyBulk(c,value);
+
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+}
+
+/**
+ * 遍历哈希表, 取出 field 或 value, 并回复客户端
+ */
+void genericHgetallCommand(redisClient *c, int flags) {
+    robj *o;
+    hashTypeIterator *hi;
+    int multiplier = 0;
+    int length, count = 0;
+
+    // 取出哈希对象
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    // 计算需要提取的field 和 value 的总数
+    if (flags & REDIS_HASH_KEY) multiplier++;
+    if (flags & REDIS_HASH_VALUE) multiplier++;
+    length = hashTypeLength(o) * multiplier;
+
+    addReplyMultiBulkLen(c,length);
+
+    // 初始化迭代器
+    hi = hashTypeInitIterator(o);
+
+    // 迭代器节点
+    while (hashTypeNext(hi) != REDIS_ERR) {
+
+        if (flags & REDIS_HASH_KEY) {
+            addHashIteratorCursorToReply(c,hi,REDIS_HASH_KEY);
+            count++;
+        }
+
+        if (flags & REDIS_HASH_VALUE) {
+            addHashIteratorCursorToReply(c,hi,REDIS_HASH_VALUE);
+            count++;
+        }
+    }
+
+    // 释放迭代器
+    hashTypeReleaseIterator(hi);
+    redisAssert(length == count);
+}
+
+// HKEYS key
+void hkeysCommand(redisClient *c) {
+
+}
+
+// HVALS key
+void hvalsCommand(redisClient *c) {
+    genericHgetallCommand(c,REDIS_HASH_VALUE);
+}
+
+// HGETALL key
+void hgetallCommand(redisClient *c) {
+    genericHgetallCommand(c,REDIS_HASH_KEY);
+}
+
+// HEXISTS key field
+void hexistsCommand(redisClient *c) {
+    robj *o;
+
+    // 取出哈希对象
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    addReply(c, hashTypeExists(o,c->argv[2]) ? shared.cone : shared.czero);
+}
+
+// HSCAN key cursor [MATCH pattern] [COUNT count]
+void hscanCommand(redisClient *c) {
+    robj *o;
+    unsigned long cursor;
+
+    if (parseScanCursorOrReply(c,c->argv[2],&cursor) == REDIS_ERR) return;
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.emptyscan)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+    scanGenericCommand(c,o,cursor);
+}

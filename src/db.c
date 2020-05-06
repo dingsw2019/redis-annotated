@@ -87,3 +87,12 @@ void signalModifiedKey(redisDb *db, robj *key) {
 void signalFlushDb(int dbid) {
 
 }
+
+int parseScanCursorOrReply(redisClient *c, robj *o, unsigned long *cursor) {
+
+    return REDIS_OK;
+}
+
+void scanGenericCommand(redisClient *c, robj *o, unsigned long cursor) {
+    
+}
