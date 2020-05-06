@@ -807,3 +807,125 @@ void hincrbyfloatCommand(redisClient *c) {
     decrRefCount(new);
     decrRefCount(new);
 }
+
+/**
+ * 辅助函数, 将 field 的值添加到回复中
+ */
+static void addHashFieldToReply(redisClient *c, robj *o, robj *field) {
+    int ret;
+
+    if (o == NULL) {
+        addReply(c,shared.nullbulk);
+        return;
+    }
+
+    // 提取 field 的值
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *vstr = NULL;
+        unsigned int vlen = UINT_MAX;
+        long long vll = LLONG_MAX;
+
+        ret = hashTypeGetFromZiplist(o,field,&vstr,&vlen,&vll);
+
+        if (ret < 0) {
+            addReply(c,shared.nullbulk);
+
+        } else {
+
+            if (vstr) {
+                addReplyBulkCBuffer(c,vstr,vlen);
+            } else {
+                addReplyLongLong(c,vll);
+            }
+        }
+        
+    } else if (o->encoding == REDIS_ENCODING_HT) {
+        robj *value;
+        ret = hashTypeGetFromHashTable(o,field,&value);
+
+        if (ret < 0) {
+            addReply(c,shared.nullbulk);
+
+        } else {
+            addReplyBulk(c,value);
+        }
+    
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+}
+
+// HGET key field
+void hgetCommand(redisClient *c) {
+    robj *o;
+
+    // 获取哈希对象
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    addHashFieldToReply(c,o,c->argv[2]);
+}
+
+// HMGET key field [field ...]
+void hmgetCommand(redisClient *c) {
+    robj *o;
+    int i;
+
+    // 获取哈希对象
+    o = lookupKeyRead(c->db,c->argv[1]);
+    if (o == NULL || o->type != REDIS_HASH) {
+        addReply(c,shared.wrongtypeerr);
+        return;
+    }
+
+    // 批量添加 field 的值, 并回复客户端
+    addReplyMultiBulkLen(c,c->argc-2);
+    for (i = 2; i < c->argc; i++) {
+        addHashFieldToReply(c,o,c->argv[i]);
+    }
+}
+
+// HDEL key field [field ...]
+void hdelCommand(redisClient *c) {
+    robj *o;
+    int j, deleted = 0, keyremoved = 0;
+
+    // 取出哈希对象
+    if ((o = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    // 遍历删除 field
+    for (j = 2; j < c->argc; j++) {
+
+        if (hashTypeDelete(o,c->argv[j])) {
+
+            // 更新删除元素数量
+            deleted++;
+
+            // 哈希对象为空, 删除 key
+            if (hashTypeLength(o) == 0) {
+                keyremoved = 1;
+                dbDelete(c->db,c->argv[1]);
+                break;
+            }
+        }
+    }
+
+
+    // 发送删除通知
+    if (deleted) {
+
+        signalModifiedKey(c->db,c->argv[1]);
+
+        notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hdel",c->argv[1],c->db->id);
+
+        // 发送键删通知
+        if (keyremoved) {
+            notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
+        }
+
+        server.dirty += deleted;
+    }
+
+    addReplyLongLong(c,deleted);
+}

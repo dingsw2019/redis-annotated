@@ -1415,6 +1415,16 @@ void ziplistRepr(unsigned char *zl) {
 // gcc -g zmalloc.c sds.c util.c ziplist.c
 int main(void) {
 
+    printf("sizeof(1)=%d\n",sizeof(1));
+    printf("sizeof(32760)=%d\n",sizeof(32760));
+    printf("sizeof(2147483640)=%d\n",sizeof(2147483640));
+    printf("int size: %lu byte\n",sizeof(int));
+    printf("short size: %lu byte\n",sizeof(short int));
+    printf("long size: %lu byte\n",sizeof(long int));
+    printf("long long size: %lu byte\n",sizeof(long long int));
+    // printf("sizeof(1)=%d\n",sizeof(1));
+    exit(0);
+
     unsigned char *zl, *p;
     unsigned char *entry;
     unsigned int elen;
