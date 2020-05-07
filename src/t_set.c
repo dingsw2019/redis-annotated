@@ -298,7 +298,7 @@ int setTypeRandomElement(robj *setobj, robj **objele, int64_t *llele) {
     if (setobj->encoding == REDIS_ENCODING_HT) {
         dictEntry *de = dictGetRandomKey(setobj->ptr);
         *objele = dictGetKey(de);
-        
+
     } else if (setobj->encoding == REDIS_ENCODING_INTSET) {
         llele = intsetRandom(setobj->ptr);
 
@@ -328,3 +328,232 @@ unsigned long setTypeSize(robj *subject) {
 }
 
 /*----------------------------- 命令 ------------------------------*/
+
+// SADD key member [member ...]
+void saddCommand(redisClient *c) {
+    int j, added = 0;
+    robj *set;
+
+    // 取出集合对象
+    set = lookupKeyWrite(c->db,c->argv[1]);
+
+    // 如果不存在, 就创建一个空的集合对象
+    if (set == NULL) {
+        set = setTypeCreate(c->argv[2]);
+        dbAdd(c->db,c->argv[1],set);
+
+    // 存在, 检查类型是否对
+    } else {
+        if (set->type != REDIS_SET) {
+            addReply(c,shared.wrongtypeerr);
+            return;
+        }
+    }
+
+    // 添加元素
+    for (j = 2; j < c->argc; j++) {
+        c->argv[j] = tryObjectEncoding(c->argv[j]);
+        
+        if (setTypeAdd(set,c->argv[j]))
+            added++;
+    }
+
+    // 发送通知
+    if (added) {
+        signalModifiedKey(c->db,c->argv[1]);
+
+        notifyKeyspaceEvent(REDIS_NOTIFY_SET,"sadd",c->argv[1],c->db->id);
+    }
+
+    server.dirty += added;
+
+    addReplyLongLong(c,added);
+}
+
+// SREM key member [member ...]
+void sremCommand(redisClient *c) {
+    int j, deleted = 0, keyremoved = 0;
+    robj *set;
+
+    // 取出集合对象
+    if ((set = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL ||
+        checkType(c,set,REDIS_SET)) return;
+
+    // 遍历删除节点
+    for (j = 2; j < c->argc; j++) {
+
+        c->argv[j] = tryObjectEncoding(c->argv[j]);
+
+        // 删除成功
+        if (setTypeRemove(set,c->argv[j])) {
+            deleted++;
+            // 如果集合空了
+            if (setTypeSize(set) == 0) {
+                dbDelete(c->db,c->argv[1]);
+                keyremoved = 1;
+                break;
+            }
+        }
+    }
+
+    // 发送通知
+    if (deleted) {
+        signalModifiedKey(c->db, c->argv[1]);
+
+        notifyKeyspaceEvent(REDIS_NOTIFY_SET,"srem",c->argv[1],c->db->id);
+
+        if (keyremoved)
+            notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
+        
+        server.dirty += deleted;
+    }
+
+    // 回复客户端
+    addReplyLongLong(c,deleted);
+}
+
+// SMOVE source destination member
+// 将元素值从 source 移动到 dest
+void smoveCommand(redisClient *c) {
+    robj *srcset, *dstset, *ele;
+
+    // 取出 source 的集合对象
+    srcset = lookupKeyWrite(c->db,c->argv[1]);
+
+    // 取出 dst 的集合对象
+    dstset = lookupKeyWrite(c->db,c->argv[2]);
+
+    ele = c->argv[3] = tryObjectEncoding(c->argv[3]);
+
+    // 如果 src 为空, 返回
+    if (srcset == NULL) {
+        addReply(c,shared.czero);
+        return;
+    }
+
+    // src 和 dst 的类型检查
+    if (checkType(c,srcset,REDIS_SET) ||
+        (dstset && checkType(c,dstset,REDIS_SET))) return;
+        
+    // src 等于 dst
+    if (srcset == dstset) {
+        addReply(c,shared.cone);
+        return;
+    }
+
+    // 删除 src 的 member, 不存在返回
+    if (!setTypeRemove(srcset,ele)) {
+        // 删除失败
+        addReply(c,shared.czero);
+        return;
+    }
+
+    // 发送通知, 更新键改次数
+    notifyKeyspaceEvent(REDIS_NOTIFY_SET,"srem",c->argv[1],c->db->id);
+
+    // 如果 src 的集合为空了
+    if (setTypeSize(srcset) == 0) {
+        dbDelete(c->db,c->argv[1]);
+        notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
+    }
+
+    signalModifiedKey(c->db,c->argv[1]);
+    signalModifiedKey(c->db,c->argv[2]);
+
+    server.dirty++;
+
+    // 如果 dst 为空, 那么创建一个空集合
+    if (!dstset) {
+        dstset = setTypeCreate(ele);
+        dbAdd(c->db,c->argv[2],dstset);
+    }
+
+    // 添加 member 到 dst
+    if (setTypeAdd(dstset,ele)) {
+        // 发送通知, 更新键改次数
+        notifyKeyspaceEvent(REDIS_NOTIFY_SET,"sadd",c->argv[2],c->db->id);
+
+        server.dirty++;
+    }
+
+    // 回复客户端
+    addReply(c, shared.cone);
+}
+
+// SISMEMBER key member
+void sismemberCommand(redisClient *c) {
+    robj *set;
+
+    // 取出集合对象
+    if ((set = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
+        checkType(c,set,REDIS_SET)) return;
+
+    c->argv[2] = tryObjectEncoding(c->argv[2]);
+    
+    // 回复客户端 , 元素是否存在
+    if (setTypeIsMember(set,c->argv[2])) {
+        // 存在
+        addReply(c,shared.cone);
+
+    } else {
+        // 不存在
+        addReply(c,shared.czero);
+    }
+}
+
+// SCARD key
+void scardCommand(redisClient *c) {
+    robj *set;
+
+    // 取出集合对象
+    if ((set = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
+        checkType(c,set,REDIS_SET)) return;
+
+    // 回复客户端
+    addReplyLongLong(c,setTypeSize(set));
+}
+
+// SPOP key
+void spopCommand(redisClient *c) {
+    robj *set, *ele, *aux;
+    int64_t llele;
+    int encoding;
+
+    // 取出集合对象, 不存在直接返回
+    if ((set = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,set,REDIS_SET)) return;
+
+    // 随机获取一个元素
+    encoding = setTypeRandomElement(set,&ele,&llele);
+
+    if (encoding == REDIS_ENCODING_INTSET) {
+        ele = createStringObjectFromLongLong(llele);
+        set->ptr = intsetRemove(set->ptr,llele,NULL);
+
+    } else if (encoding == REDIS_ENCODING_HT) {
+        incrRefCount(ele);
+        setTypeRemove(set,ele);
+    }
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_SET,"spop",c->argv[1],c->db->id);
+
+    aux = createStringObject("SREM",4);
+    rewriteClientCommandVector(c,3,aux,c->argv[1],ele);
+    decrRefCount(ele);
+    decrRefCount(aux);
+
+    // 回复客户端
+    addReplyBulk(c,ele);
+
+    // 集合空了
+    if (setTypeSize(set) == 0) {
+        dbDelete(c->db,c->argv[1]);
+        notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",c->argv[1],c->db->id);
+    }
+
+    // 发送通知
+    signalModifiedKey(c->db,c->argv[1]);
+
+    // 更新键改次数
+    server.dirty++;
+}
