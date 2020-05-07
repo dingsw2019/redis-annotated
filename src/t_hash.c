@@ -805,7 +805,6 @@ void hincrbyfloatCommand(redisClient *c) {
     decrRefCount(aux);
     rewriteClientCommandArgument(c,3,new);
     decrRefCount(new);
-    decrRefCount(new);
 }
 
 /**
