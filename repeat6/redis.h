@@ -370,6 +370,25 @@ typedef struct zrangespec {
 } zrangespec;
 
 /*
+ * 多态集合迭代器
+ */
+typedef struct {
+
+    // 被迭代的对象
+    robj *subject;
+
+    // 对象的编码
+    int encoding;
+
+    // 索引值，编码为 intset 时使用
+    int ii; /* intset iterator */
+
+    // 字典迭代器，编码为 HT 时使用
+    dictIterator *di;
+
+} setTypeIterator;
+
+/*
  * 哈希对象的迭代器
  */
 typedef struct {
