@@ -75,6 +75,11 @@ typedef long long mstime_t; /* 毫秒 */
 #define REDIS_LRU_CLOCK_RESOLUTION 1000
 #define REDIS_SHARED_BULKHDR_LEN 32
 
+/* 集合操作编码 */
+#define REDIS_OP_UNION 0
+#define REDIS_OP_DIFF 1
+#define REDIS_OP_INTER 2
+
 // 过期时间的单位, 秒或毫秒
 #define UNIT_SECONDS 0
 #define UNIT_MILLISECONDS 1

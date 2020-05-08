@@ -557,3 +557,143 @@ void spopCommand(redisClient *c) {
     // 更新键改次数
     server.dirty++;
 }
+
+#define SRANDMEMBER_SUB_STRATEGY_MUL 3
+// 实现 SRANDMEMBER key [count]
+void srandmemberWithCountCommand(redisClient *c) {
+    long l;
+    unsigned long count, size;
+    int encoding, uniq = 1;
+    robj *ele, *set;
+    int64_t llele;
+    dict *d;
+
+    // 取出 count 值
+    if (getLongFromObjectOrReply(c,c->argv[2],&l,NULL) != REDIS_OK)
+        return;
+
+    // 将 count 负转正, 计算是否随机元素唯一
+    if (l >= 0) {
+        count = (unsigned) l;
+
+    } else {
+        count = -l;
+        uniq = 0;
+    }
+
+    // 取出集合对象
+    if ((set = lookupKeyWriteOrReply(c,c->argv[1],shared.emptymultibulk)) == NULL ||
+        checkType(c,set,REDIS_SET)) return;
+
+    // 集合长度
+    size = setTypeSize(set);
+
+    // count = 0, 直接返回
+    if (count == 0) {
+        addReply(c,shared.emptymultibulk);
+        return;
+    }
+
+
+    // case 1: count是负数, 可重复, 随机取 count 个返回
+    if (!uniq) {
+
+        addReplyMultiBulkLen(c,count);
+        while (count--) {
+
+            encoding = setTypeRandomElement(set,&ele,&llele);
+            if (encoding == REDIS_ENCODING_INTSET) {
+                addReplyLongLong(c,llele);
+            } else {
+                addReplyBulk(c,ele);
+            }
+        }
+
+        return;
+    }
+
+    // case 2: count大于集合数量, 返回整个集合
+    if (count >= size) {
+        sunionDiffGenericCommand(c,c->argv+1,1,NULL,REDIS_OP_UNION);
+        return;
+    }
+
+    // case 3 和 case 4 需要字典结构
+    d = dictCreate(&setDictType,NULL);
+
+    // case 3: count大于集合的三分之一, 随机取太慢, 采用随机删除 2/3 的方法
+    if (count * SRANDMEMBER_SUB_STRATEGY_MUL > size) {
+        setTypeIterator *si;
+
+        // 将所有元素迭代到字典中
+        si = setTypeInitIterator(set);
+
+        while((encoding = setTypeNext(si,&ele,&llele)) != -1) {
+            int retval = DICT_ERR;
+
+            if (encoding == REDIS_ENCODING_INTSET) {
+                retval = dictAdd(d,createStringObjectFromLongLong(llele),NULL);
+            } else {
+                retval = dictAdd(d,dupStringObject(ele),NULL);
+            }
+            redisAssert(retval == DICT_OK);
+        }
+
+        setTypeReleaseIterator(si);
+        redisAssert(dictSize(d) == size);
+
+        // 随机删除元素
+        while (size > count) {
+            dictEntry *de;
+
+            de = dictGetRandomKey(d);
+            dictDelete(d,dictGetKey(de));
+
+            size--;
+        }
+
+
+    // case 4: 随机取 count 个元素
+    } else {
+        unsigned long added = 0;
+
+        while (added < count) {
+
+            // 随机元素
+            encoding = setTypeRandomElement(set,&ele,&llele);
+
+            // 元素装入 robj 中
+            if (encoding == REDIS_ENCODING_INTSET) {
+                ele = createStringObjectFromLongLong(llele);
+            } else {
+                ele = dupStringObject(ele);
+            }
+
+            // 添加到字典
+            if (dictAdd(d,ele,NULL) == REDIS_OK) {
+                added++;
+            } else {
+                decrRefCount(ele);
+            }
+        }
+    }
+
+    // 返回 case 3 或 case 4 的元素
+    if (size > count) {
+        dictIterator *di;
+        dictEntry *de;
+
+        di = dictGetIterator(d);
+        while ((de = dictNext(di)) != NULL) {
+            addReplyBulk(c,dictGetKey(de));
+        }
+
+        dictReleaseIterator(di);
+        dictRelease(d);
+    }
+}
+
+// SRANDMEMBER key [count]
+void srandmemberCommand(redisClient *c) {
+
+}
