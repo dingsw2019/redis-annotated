@@ -695,5 +695,441 @@ void srandmemberWithCountCommand(redisClient *c) {
 
 // SRANDMEMBER key [count]
 void srandmemberCommand(redisClient *c) {
+    robj *set, *ele;
+    int64_t llele;
+    int encoding;
 
+    // 填写 count, 调用count专用方法
+    if (c->argc == 3) {
+        srandmemberWithCountCommand(c);
+        return;
+
+    // 参数错误, 报错返回
+    } else if (c->argc > 3) {
+        addReply(c,shared.syntaxerr);
+        return;
+    }
+
+    // 获取集合对象
+    if ((set = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,set,REDIS_SET)) return;
+
+    // 随机获取元素
+    encoding = setTypeRandomElement(set,&ele,&llele);
+
+    // 回复客户端
+    if (encoding == REDIS_ENCODING_INTSET) {
+        addReplyLongLong(c,llele);
+    } else {
+        addReplyBulk(c,ele);
+    }
+}
+
+/**
+ * 计算 s1 集合元素数量与 s2 集合元素数量之间的差值
+ */
+int qsortCompareSetsByCardinality(const void *s1, const void *s2) {
+    return setTypeSize((robj**)s1)-setTypeSize((robj**)s2);
+}
+
+/**
+ * 计算 s2 集合元素数量与 s1 集合元素数量之间的差值
+ */
+int qsortCompareSetsByRevCardinality(const void *s1, const void *s2) {
+    robj *o1 = (robj**)s1;
+    robj *o2 = (robj**)s2;
+
+    return (o2 ? setTypeSize(o2) : 0) - (o1 ? setTypeSize(o1) : 0);
+}
+
+/**
+ * sinter 的通用方法
+ */
+void sinterGenericCommand(redisClient *c, robj **setkeys, unsigned long setnum, robj *dstkey) {
+    
+    // 集合数组, 将 setkeys 指向的集合都放在这里
+    robj **sets = zmalloc(sizeof(robj*)*setnum);
+
+    setTypeIterator *si;
+    robj *eleobj, *dstset = NULL;
+    int64_t intobj;
+    void *replylen = NULL;
+    unsigned long j, cardinality = 0;
+    int encoding;
+
+    // 获取集合, 并填入数组
+    for (j = 0; j < setnum; j++) {
+
+        // 获取集合对象, 第一次取的是 dest 集合
+        // 之后取的是 source 集合
+        // 疑问 : 不明白这里区分的原因, sinterstore 是把所有 source 赋给 setkeys
+        //       这里是取不到 dst 的
+        robj *setobj = dstkey ? lookupKeyWrite(c->db,setkeys[j]) :
+                          lookupKeyRead(c->db,setkeys[j]);
+
+        // 集合不存在, 直接回复客户端, 清理变量
+        if (!setobj) {
+            zfree(sets);
+            if (dstkey) {
+                if (dbDelete(c->db, dstkey)) {
+                    signalModifiedKey(c->db,dstkey);
+                    server.dirty++;
+                }
+                addReply(c,shared.czero);
+            } else {
+                addReply(c,shared.emptymultibulk);
+            }
+            return;
+        }
+
+        // 检查对象类型
+        if (checkType(c,setobj,REDIS_SET)) {
+            zfree(sets);
+            return;
+        }
+
+        sets[j] = setobj;
+    }
+
+    // 数据从小到大排序, 将最小的集合放在首地址
+    qsort(sets,setnum,sizeof(robj*),qsortCompareSetsByCardinality);
+
+    // 设置了 dst, 创建一个 dst, 交集元素写入
+    // 未设置, 申请一个回复客户端的 buf
+    if (!dstkey) {
+        replylen = addDeferredMultiBulkLength(c);
+    } else {
+        dstset = createIntsetObject();
+    }
+
+    // 提取交集元素
+    // 第一个集合时元素最少的集合, 交集元素一定在这个范围
+    si = setTypeInitIterator(sets[0]);
+
+    // 比对获取与最小集合内元素,相同的元素
+    while((encoding = setTypeNext(si,&eleobj,&intobj)) != -1) {
+
+        // 遍历其他集合
+        for (j = 1; j < setnum; j++) {
+
+            // 跳过第一个集合, 因为它是原始集合
+            if (sets[j] == sets[0]) continue;
+
+            // 元素值为 int
+            // 在其他集合中查找是否存在这个元素值
+            if (encoding == REDIS_ENCODING_INTSET) {
+
+                if (sets[j]->encoding == REDIS_ENCODING_INTSET &&
+                    !intsetFind((intset*)sets[j]->ptr,intobj)) 
+                {
+                    break;
+
+                } else if (sets[j]->encoding == REDIS_ENCODING_HT) {
+                    eleobj = createStringObjectFromLongLong(intobj);
+                    if (!setTypeIsMember(sets[j],eleobj)) {
+                        decrRefCount(eleobj);
+                        break;
+                    }
+                    decrRefCount(eleobj);
+                }
+
+            } else {
+                if (eleobj->encoding == REDIS_ENCODING_INT &&
+                        sets[j]->encoding == REDIS_ENCODING_INTSET &&
+                        !intsetFind((intset*)sets[j]->ptr,(long)eleobj->ptr)) 
+                {
+                    break;
+
+                } else if (!setTypeIsMember(sets[j],eleobj)) {
+                    break;
+                }
+            }
+        }
+
+        // 交集元素
+        if (j == setnum) {
+
+            // SINTER 命令，直接返回结果集元素
+            if (!dstkey) {
+                if (encoding == REDIS_ENCODING_HT) {
+                    addReplyBulk(c,eleobj);
+                } else {
+                    addReplyLongLong(c,intobj);
+                }
+                cardinality++;
+            // SINTERSTORE命令, 添加交集元素到 dst 集合
+            } else {
+                if (encoding == REDIS_ENCODING_INTSET) {
+                    eleobj = createStringObjectFromLongLong(intobj);
+                    setTypeAdd(dstset,eleobj);
+                    decrRefCount(eleobj);
+                } else {
+                    setTypeAdd(dstset,eleobj);
+                }
+            }
+        }
+    }
+    setTypeReleaseIterator(si);
+
+    // SINTERSTORE 命令，将结果集关联到数据库
+    if (dstkey) {
+
+        // 删除现有 dstkey
+        int deleted = dbDelete(c->db,dstkey);
+
+        // 如果结果集非空, 将它关联到数据库中
+        if (setTypeSize(dstset) > 0) {
+            dbAdd(c->db,dstkey,dstset);
+            addReplyLongLong(c,setTypeSize(dstset));
+            notifyKeyspaceEvent(REDIS_NOTIFY_SET,"sinterstore",dstkey,c->db->id);
+
+        // 结果集是空的, 干掉
+        } else {
+            decrRefCount(dstset);
+            addReply(c,shared.czero);
+            if (deleted)
+                notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",dstkey,c->db->id);
+        }
+
+        signalModifiedKey(c->db,dstkey);
+
+        server.dirty++;
+    
+    // SINTER 命令, 回复结果集的基数
+    } else {
+        setDeferredMultiBulkLength(c,replylen,cardinality);
+    }
+
+    zfree(sets);
+}
+
+// SINTER key [key ...]
+void sinterCommand(redisClient *c) {
+    sinterGenericCommand(c,c->argv+1,c->argc-1,NULL);
+}
+
+// SINTERSTORE destination key [key ...]
+void sinterstoreCommand(redisClient *c) {
+    sinterGenericCommand(c,c->argv+2,c->argc-2,c->argv[1]);
+}
+
+/**
+ * 命令类型, 并集/差集/交集
+ */
+#define REDIS_OP_UNION 0
+#define REDIS_OP_DIFF 1
+#define REDIS_OP_INTER 2
+
+void sunionDiffGenericCommand(redisClient *c, robj **setkeys, int setnum, robj *dstkey, int op) {
+    robj **sets = zmalloc(sizeof(robj*)*setnum);
+
+    setTypeIterator *si;
+    robj *ele, *dstset = NULL;
+    int j, cardinality = 0;
+    int diff_algo = 1;
+
+    // 取出所有集合对象, 并添加到集合数组
+    for (j = 0; j < setnum; j++) {
+        
+        // 取出集合对象
+        robj *setobj = dstkey ? lookupKeyWrite(c->db,setkeys[j]) :
+                          lookupKeyRead(c->db,setkeys[j]);
+
+        // 不存在的集合, 给 NULL
+        if (!setobj) {
+            sets[j] = NULL;
+            continue;
+        }
+
+        // 检查对象类型
+        if (checkType(c,setobj,REDIS_SET)) {
+            zfree(sets);
+            return;
+        }
+
+        // 添加到集合数组
+        sets[j] = setobj;
+    }
+
+    /**
+     *  DIFF 算法决策
+     * 
+     * 算法 1 的复杂度为 O(N*M), N 是 set[0] 的元素数量, M 是其他集合的数量
+     * 
+     * 算法 2 的复杂度为 O(N), N 是全部集合的元素数量
+     * 
+     * 程序通过计算复杂度来决策使用哪一种算法
+     */
+    if (op == REDIS_OP_DIFF && sets[0]) {
+        long long algo_one_work = 0, algo_two_work = 0;
+
+        // 遍历所有集合
+        for (j = 0; j < setnum; j++) {
+            // 跳过空集合
+            if (sets[j] == NULL) continue;
+
+            // 算法 1 的复杂度
+            algo_one_work += setTypeSize(sets[0]);
+
+            // 算法 2 的复杂度
+            algo_two_work += setTypeSize(sets[j]);
+        }
+
+        // 算法 1 的常数比较低, 优先考虑算法 1
+        algo_one_work /= 2;
+        diff_algo = (algo_one_work <= algo_two_work) ? 1 : 2;
+
+        // 如果使用算法 1, 那么最好对 set[0] 以外的集合进行从大到小排序
+        // 这样有助于优化算法性能
+        if (diff_algo == 1 && setnum > 1) {
+
+            qsort(sets+1,setnum-1,sizeof(robj*),
+                qsortCompareSetsByRevCardinality);
+        }
+    }
+
+    // 创建一个空的目标集合
+    dstset = createIntsetObject();
+
+    // 并集计算
+    if (op == REDIS_OP_UNION) {
+
+        for (j = 0; j < setnum; j++) {
+
+            si = setTypeInitIterator(sets[j]);
+            while ((ele = setTypeNextObject(si)) != NULL) {
+                if (setTypeAdd(dstset,ele)) cardinality++;
+                decrRefCount(ele);
+            }
+            setTypeReleaseIterator(si);
+        }
+
+
+    // 差集计算, 使用算法 1
+    } else if (op == REDIS_OP_DIFF && sets[0] && diff_algo == 1) {
+
+
+        /**
+         * 迭代 set[0] 集合的元素, 当前元素不存在所有其他集合时
+         * 
+         * 将元素添加到目标集合
+         */
+        si = setTypeInitIterator(sets[0]);
+        while ((ele = setTypeNextObject(si)) != NULL) {
+            
+            // 查找交集元素
+            for (j = 1; j < setnum; j++) {
+                if (!sets[j]) continue;
+                if (sets[j] == sets[0]) break;
+                if (setTypeIsMember(sets[j],ele)) break;
+            }
+
+            // 不存在交集元素
+            if (j == setnum) {
+                setTypeAdd(dstset,ele);
+                cardinality++;
+            }
+
+            decrRefCount(ele);
+        }
+        setTypeReleaseIterator(si);
+
+    // 差集计算, 使用算法 2
+    } else if (op == REDIS_OP_DIFF && sets[0] && diff_algo == 2) {
+
+        /**
+         * 将 set[0] 集合的元素添加到 目标集合(dstset)
+         * 
+         * 其他集合中的元素, 如果存在 dstset 中, 将其移出 dstset
+         */
+        for (j = 0; j < setnum; j++) {
+            if (!sets[j]) continue;
+
+            si = setTypeInitIterator(sets[j]);
+            while ((ele = setTypeNextObject(si)) != NULL) {
+
+                if (j == 0) {
+                    if (setTypeAdd(dstset,ele)) cardinality++;
+                } else {
+                    if (setTypeRemove(dstset,ele)) cardinality--;
+                }
+                decrRefCount(ele);
+            }
+            setTypeReleaseIterator(si);
+
+            if (cardinality == 0) break;
+        }
+    }
+
+    
+    // 执行 SDIFF 或 SUNION命令
+    // 打印目标集合的所有元素
+
+    // 目标集合不存在
+    if (!dstkey) {
+        addReplyMultiBulkLen(c,cardinality);
+
+        // 迭代目标集合, 回复客户端
+        si = setTypeInitIterator(dstset);
+        while ((ele = setTypeNextObject(si)) != NULL) {
+            addReplyBulk(c,ele);
+            decrRefCount(ele);
+        }
+        setTypeReleaseIterator(si);
+
+        decrRefCount(dstset);
+
+    // 目标集合存在
+    } else {
+
+        // 删除可能存在的目标集合
+        int deleted = dbDelete(c->db,dstkey);
+
+        // 目标集合不为空, 将目标集合关联到数据库中
+        if (setTypeSize(dstset) > 0) {
+            dbAdd(c->db,dstkey,dstset);
+            addReplyLongLong(c,setTypeSize(dstset));
+            notifyKeyspaceEvent(REDIS_NOTIFY_SET,
+                op == REDIS_OP_UNION ? "sunionstore" : "sdiffstore",
+                dstkey,c->db->id);
+
+
+        // 目标集合为空, 清除内存
+        } else {
+            decrRefCount(dstset);
+            // 回复客户端 0
+            addReply(c,shared.czero);
+
+            if (deleted)
+                notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",
+                    dstkey,c->db->id);
+        }
+
+        signalModifiedKey(c->db,dstkey);
+
+        server.dirty++;
+    }
+
+    // 释放集合数组
+    zfree(sets);
+}
+
+// SUNION key [key ...]
+void sunionCommand(redisClient *c) {
+    sunionDiffGenericCommand(c,c->argv+1,c->argc-1,NULL,REDIS_OP_UNION);
+}
+
+// SUNIONSTORE destination key [key ...]
+void sunionstoreCommand(redisClient *c) {
+    sunionDiffGenericCommand(c,c->argv+2,c->argc-2,c->argv[1],REDIS_OP_UNION);
+}
+
+// SDIFF key [key ...]
+void sdiffCommand(redisClient *c) {
+    sunionDiffGenericCommand(c,c->argv+1,c->argc-1,NULL,REDIS_OP_DIFF);
+}
+
+// SDIFFSTORE destination key [key ...]
+void sdiffstoreCommand(redisClient *c) {
+    sunionDiffGenericCommand(c,c->argv+2,c->argc-2,c->argv[1],REDIS_OP_DIFF);
 }
