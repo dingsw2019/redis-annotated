@@ -1031,7 +1031,7 @@ void genericHgetallCommand(redisClient *c, int flags) {
 
 // HKEYS key
 void hkeysCommand(redisClient *c) {
-
+    genericHgetallCommand(c,REDIS_HASH_KEY);
 }
 
 // HVALS key
@@ -1041,7 +1041,7 @@ void hvalsCommand(redisClient *c) {
 
 // HGETALL key
 void hgetallCommand(redisClient *c) {
-    genericHgetallCommand(c,REDIS_HASH_KEY);
+    genericHgetallCommand(c,REDIS_HASH_KEY | REDIS_HASH_VALUE);
 }
 
 // HEXISTS key field

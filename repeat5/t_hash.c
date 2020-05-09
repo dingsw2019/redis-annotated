@@ -498,3 +498,429 @@ robj *hashTypeLookupWriteOrCreate(redisClient *c, robj *key) {
 }
 
 /*----------------------------- 命令 ------------------------------*/
+
+// HSET key field value
+void hsetCommand(redisClient *c) {
+    robj *o;
+    int update;
+
+    // 取出或创建哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+
+    // 是否需要转码
+    hashTypeTryConversion(o,c->argv,2,3);
+
+    hashTypeTryObjectEncoding(o,&c->argv[2],c->argv[3]);
+
+    // 添加或更新 value
+    update = hashTypeSet(o,c->argv[2],c->argv[3]);
+
+    // 回复客户端
+    addReply(c,update ? shared.czero : shared.cone);
+
+    // 发送通知
+    signalModifiedKey(c->db,c->argv[1]);
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hset",
+        c->argv[1],c->db->id);
+
+    server.dirty++;
+    
+}
+
+// HSETNX key field value
+void hsetnxCommand(redisClient *c) {
+    robj *o;
+
+    // 取出或创建哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+
+    hashTypeTryConversion(o,c->argv,2,3);
+
+    // field 存在, 报错返回
+    if (hashTypeExists(o, c->argv[2])) {
+
+        addReply(c,shared.czero);
+        return;
+
+    // field 不存在, 添加
+    } else {
+
+        hashTypeTryObjectEncoding(o,&c->argv[2],&c->argv[3]);
+
+        hashTypeSet(o,c->argv[2],c->argv[3]);
+
+        // 回复客户端
+        addReply(c,shared.cone);
+
+        // 发送通知
+        signalModifiedKey(c->db,c->argv[1]);
+
+        notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hset",
+            c->argv[1],c->db->id);
+
+        server.dirty++;
+    }
+}
+
+// HMSET key field value [field value ...]
+void hmsetCommand(redisClient *c) {
+    robj *o;
+    int j;
+
+    // 参数检查
+    if (c->argc % 2 == 1) {
+        addReplyError(c,"wrong number of arguments for HMSET");
+        return;
+    }
+
+    // 取出或创建哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+
+    hashTypeTryConversion(o,c->argv,2,c->argc-1);
+
+    // 添加节点
+    for (j = 2; j < c->argc; j+=2) {
+
+        // 尝试将参数转成字符串
+        hashTypeTryObjectEncoding(o,&c->argv[j],&c->argv[j+1]);
+
+        // 记录添加数量
+        hashTypeSet(o,c->argv[j],c->argv[j+1]);
+    }
+
+    // 回复客户端
+    addReply(c,shared.ok);
+
+    // 发送通知
+    signalModifiedKey(c->db,c->argv[1]);
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hset",
+            c->argv[1],c->db->id);
+
+    server.dirty++;
+}
+
+// HINCRBY key field increment
+void hincrbyCommand(redisClient *c) {
+    long long incr, value, oldvalue;
+    robj *o, *current, *new;
+
+    // 取出 incr 值
+    if (getLongLongFromObjectOrReply(c,c->argv[3],&incr,NULL) != REDIS_OK) return;
+
+    // 取出哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+
+    // 取出 field 的值
+    if ((current = hashTypeGetObject(o,c->argv[2])) != NULL) {
+
+        if (getLongLongFromObjectOrReply(c,current,&value,
+            "hash value is not an integer") != REDIS_OK) {
+            decrRefCount(current);
+            return;
+        }
+        decrRefCount(current);
+    } else {
+        value = 0;
+    }
+
+    // 溢出检查
+    oldvalue = value;
+    if (incr < 0 && oldvalue < 0 && incr < (LLONG_MIN - oldvalue) ||
+        incr > 0 && oldvalue > 0 && incr > (LLONG_MAX - oldvalue)) {
+
+        addReplyError(c,"increment or decrement would overflow");
+        return;
+    }
+
+    // 更新或写入新值
+    value += incr;
+    new = createStringObjectFromLongLong(value);
+
+    hashTypeTryObjectEncoding(o,&c->argv[2],NULL);
+
+    hashTypeSet(o,c->argv[2],new);
+
+    decrRefCount(new);
+
+    // 回复客户端
+    addReplyLongLong(c,value);
+
+    // 发送通知
+    signalModifiedKey(c->db,c->argv[1]);
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hincrby",
+        c->argv[1],c->db->id);
+
+    server.dirty++;
+}
+
+// HINCRBYFLOAT key field increment
+void hincrbyfloatCommand(redisClient *c) {
+    double long incr, value;
+    robj *o, *current, *new, *aux;
+
+    // 取出 incr
+    if (getLongDoubleFromObjectOrReply(c,c->argv[3],&incr,NULL) != REDIS_OK) return;
+
+    // 取出或创建哈希对象
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+
+    // 取出 field 的值
+    if ((current = hashTypeGetObject(o,c->argv[2])) != NULL) {
+        if (getLongDoubleFromObjectOrReply(c,current,&value,
+            "hash value is not a valid float") != REDIS_OK) {
+            
+            decrRefCount(current);
+            return;
+        }
+        decrRefCount(current);
+    } else {
+        value = 0;
+    }
+
+    // 计算新值
+    value += incr;
+    new = createStringObjectFromLongDouble(value);
+
+    hashTypeTryObjectEncoding(o,&c->argv[2],NULL);
+    // 写入新值
+    hashTypeSet(o,c->argv[2],new);
+
+    // 回复客户端
+    addReplyBulk(c,new);
+
+    // 发送通知
+    signalModifiedKey(c->db,c->argv[1]);
+
+    notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hincrbyfloat",
+        c->argv[1],c->db->id);
+
+    server.dirty++;
+
+    aux = createStringObject("HSET",4);
+    rewriteClientCommandArgument(c,0,aux);
+    decrRefCount(aux);
+    rewriteClientCommandArgument(c,3,new);
+    decrRefCount(new);
+}
+
+// 将 field 的值添加到回复客户端的 buf
+static void addHashFieldToReply(redisClient *c, robj *o, robj *field) {
+    int ret;
+
+    // 提取 field 的值
+    if (o == NULL) {
+        addReply(c,shared.nullbulk);
+        return;
+    }
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *zl, *fptr, *vptr;
+        unsigned char *vstr = NULL;
+        unsigned int vlen = UINT_MAX;
+        long long vll = LLONG_MAX;
+
+        field = getDecodedObject(field);
+
+        ret = hashTypeGetFromZiplist(o,field,&vstr,&vlen,&vll);
+
+        if (ret < 0) {
+            addReply(c,shared.nullbulk);
+        } else {
+
+            if (vstr) {
+                addReplyBulkCBuffer(c,vstr,vlen);
+            } else {
+                addReplyLongLong(c,vll);
+            }
+        }
+
+    } else if (o->encoding == REDIS_ENCODING_HT) {
+        robj *value;
+        ret = hashTypeGetFromHashTable(o,field,&value);
+
+        if (ret < 0) {
+            addReply(c,shared.nullbulk);
+        } else {
+            addReplyBulk(c,value);
+        }
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+}
+
+// HGET key field
+void hgetCommand(redisClient *c) {
+    robj *o;
+
+    // 获取哈希对象
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    // 回复客户端
+    addHashFieldToReply(c,o,c->argv[2]);
+}
+
+// HMGET key field [field ...]
+void hmgetCommand(redisClient *c) {
+    robj *o;
+    int j;
+
+    // 获取哈希对象
+    o = lookupKeyRead(c,c->argv[1]);
+    if (o == NULL || o->type != REDIS_HASH) {
+        addReply(c,shared.wrongtypeerr);
+        return;
+    }
+
+    // 回复客户端
+    addReplyMultiBulkLen(c,c->argc-2);
+    for (j = 2; j < c->argc; j++) {
+        addHashFieldToReply(c,o,c->argv[j]);
+    }
+}
+
+// HDEL key field [field ...]
+void hdelCommand(redisClient *c) {
+    robj *o;
+    int j, deleted = 0, keyremoved = 0;
+
+    // 获取哈希对象
+    if ((o = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    for (j = 2; j < c->argc; j++) {
+        if (hashTypeDelete(o,c->argv[j])) {
+            deleted++;
+
+            if (hashTypeLength(o) == 0) {
+                keyremoved = 1;
+                dbDelete(c->db,c->argv[1]);
+                break;
+            }
+        }
+    }
+
+    if (deleted) {
+        signalModifiedKey(c->db,c->argv[1]);
+
+        notifyKeyspaceEvent(REDIS_NOTIFY_HASH,"hdel",
+            c->argv[1],c->db->id);
+
+        if (keyremoved)
+            notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",
+                c->argv[1],c->db->id);
+
+        server.dirty += deleted;
+    }
+
+    addReplyLongLong(c,deleted);
+}
+
+// HLEN key
+void hlenCommand(redisClient *c) {
+    robj *o;
+
+    // 获取哈希对象
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    // 回复客户端
+    addReplyLongLong(c,hashTypeLength(o));
+}
+
+// 从迭代器中取出 field 或 value, 然后回复客户端
+static void addHashIteratorCursorToReply(redisClient *c, hashTypeIterator *hi, int what) {
+    int ret;
+
+    if (hi->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *vstr = NULL;
+        unsigned int vlen = UINT_MAX;
+        long long vll = LLONG_MAX;
+
+        hashTypeCurrentFromZiplist(hi,what,&vstr,&vlen,&vll);
+
+        if (vstr) {
+            addReplyBulkCBuffer(c,vstr,vlen);
+        } else {
+            addReplyLongLong(c,vll);
+        }
+
+    } else if (hi->encoding == REDIS_ENCODING_HT) {
+        robj *value;
+
+        hashTypeCurrentFromHashTable(hi,what,&value);
+
+        addReplyBulk(c,value);
+
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+}
+
+// getall 的通用函数
+void genericHgetallCommand(redisClient *c, int flags) {
+    robj *o;
+    int multiplier = 0, length, count = 0;
+    hashTypeIterator *hi;
+
+    // 获取哈希对象
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    // 计算发送的节点数
+    if (flags & REDIS_HASH_KEY) multiplier++;
+    if (flags & REDIS_HASH_VALUE) multiplier++;
+
+    length = hashTypeLength(o) *multiplier;
+
+    addReplyMultiBulkLen(c,length);
+
+    // 迭代发送节点
+    hi = hashTypeInitIterator(o);
+    while (hashTypeNext(hi) == REDIS_OK) {
+        robj *field,*value;
+        
+        if (flags & REDIS_HASH_KEY) {
+            addHashIteratorCursorToReply(c,hi,REDIS_HASH_KEY);
+            count++;
+        }
+
+        if (flags & REDIS_HASH_VALUE) {
+            addHashIteratorCursorToReply(c,hi,REDIS_HASH_VALUE);
+            count++;
+        }
+    }
+
+    // 释放迭代
+    hashTypeReleaseIterator(hi);
+    redisAssert(length == count);
+}
+
+// HKEYS key
+void hkeysCommand(redisClient *c) {
+    genericHgetallCommand(c,REDIS_HASH_KEY);
+}
+
+// HVALS key
+void hvalsCommand(redisClient *c) {
+    genericHgetallCommand(c,REDIS_HASH_VALUE);
+}
+
+// HGETALL key
+void hgetallCommand(redisClient *c) {
+    genericHgetallCommand(c,REDIS_HASH_KEY|REDIS_HASH_VALUE);
+}
+
+// HEXISTS key field
+void hexistsCommand(redisClient *c) {
+    robj *o;
+
+    // 获取哈希对象
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
+        checkType(c,o,REDIS_HASH)) return;
+
+    addReply(c,hashTypeExists(o,c->argv[2]) ? shared.cone : shared.czero);
+}
