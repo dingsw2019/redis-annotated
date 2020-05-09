@@ -220,7 +220,281 @@ void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
 
 /*----------------------------- 基础函数 ------------------------------*/
 
+// 将 o1 , o2 转换成字符串
+void hashTypeTryObjectEncoding(robj *subject, robj **o1, robj **o2) {
 
+    if (subject->encoding == REDIS_ENCODING_HT) {
+        *o1 = tryObjectEncoding(*o1);
+        *o2 = tryObjectEncoding(*o2);
+    }
+}
 
+// 查找 field 的值, 并写入 vstr 或 vll 中
+// 找到返回 0, 否则返回 -1
+int hashTypeGetFromZiplist(robj *o, robj *field, 
+                            unsigned char **vstr, unsigned int *vlen, long long *vll) 
+{
+
+    // 提取哈希对象
+    unsigned char *zl,*fptr = NULL, *vptr = NULL;
+    int ret;
+
+    redisAssert(o->encoding == REDIS_ENCODING_ZIPLIST);
+
+    field = getDecodedObject(field);
+
+    // 查找 field 节点
+    zl = o->ptr;
+    fptr = ziplistIndex(zl,ZIPLIST_HEAD);
+    if (fptr != NULL) {
+
+        fptr = ziplistFind(fptr,field->ptr,sdslen(field->ptr),1);
+        
+        if (fptr != NULL) {
+            vptr = ziplistNext(zl,fptr);
+            redisAssert(vptr != NULL);
+        }
+    }
+
+    decrRefCount(field);
+
+    // 查找 value 节点, 提取值
+    if (vptr != NULL) {
+        ret = ziplistGet(vptr,vstr,vlen,vll);
+        redisAssert(ret);
+        return 0;
+    }
+
+    return -1;
+}
+
+// 查找 field 的值, 并写入 value
+// 找到返回 0, 否则返回 -1
+int hashTypeGetFromHashTable(robj *o, robj *field, robj **value) {
+
+    dictEntry *de;
+
+    redisAssert(o->encoding == REDIS_ENCODING_HT);
+
+    de = dictFind(o->ptr, field->ptr);
+
+    if (de == NULL) return -1;
+
+    *value = dictGetVal(de);
+
+    return 0;
+}
+
+// 查找 field 的值, 并以 robj 结构返回
+robj *hashTypeGetObject(robj *o, robj *field) {
+    robj *value = NULL;
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *vstr = NULL;
+        unsigned int vlen = UINT_MAX;
+        long long vll = LLONG_MAX;
+
+        // 查找成功
+        if (hashTypeGetFromZiplist(o,field,&vstr,&vlen,&vll) == 0) {
+            if (vstr) {
+                value = createStringObject(vstr,vlen);
+            } else {
+                value = createStringObjectFromLongLong(vll);
+            }
+        }
+
+    } else if (o->encoding == REDIS_ENCODING_HT) {
+        robj *aux;
+
+        if (hashTypeGetFromHashTable(o,field,&aux) == 0) {
+            incrRefCount(aux);
+            value = aux;
+        }
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+
+    return value;
+}
+
+// 查找 field 是否存在
+// 存在返回 1, 否则返回 0
+int hashTypeExists(robj *o, robj *field) {
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *vstr = NULL;
+        unsigned int vlen = UINT_MAX;
+        long long vll = LLONG_MAX;
+
+        if (hashTypeGetFromZiplist(o,field,&vstr,&vlen,&vll) == 0)
+            return 1;
+
+    } else if (o->encoding == REDIS_ENCODING_HT) {
+        robj *aux;
+        if (hashTypeGetFromHashTable(o,field,&aux) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
+/**
+ * 将 field-value 添加到哈希表
+ * 如果 field 已存在, 更新其 value
+ * 
+ * 返回 0 , 表示新增
+ * 返回 1 , 表示更新
+ */
+int hashTypeSet(robj *o, robj *field, robj *value) {
+    int update = 0;
+
+    // ziplist
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *zl,*fptr,*vptr;
+
+        field = getDecodedObject(field);
+        value = getDecodedObject(value);
+
+        // 查找 field
+        zl = o->ptr;
+        fptr = ziplistIndex(zl,ZIPLIST_HEAD);
+
+        // 更新
+        if (fptr != NULL) {
+
+            // field 存在
+            fptr = ziplistFind(fptr,field->ptr,sdslen(field->ptr),1);
+
+            if (fptr != NULL) {
+
+                // 定位 value
+                vptr = ziplistNext(zl,fptr);
+                redisAssert(vptr != NULL);
+
+                // 删除旧 value
+                zl = ziplistDelete(zl,&vptr);
+
+                // 绑定新 value
+                zl = ziplistInsert(zl,vptr,value->ptr,sdslen(value->ptr));
+
+                update = 1;
+            }
+        }
+
+        // 新增
+        if (!update) {
+
+            ziplistPush(zl,field->ptr,sdslen(field->ptr),ZIPLIST_TAIL);
+            ziplistPush(zl,value->ptr,sdslen(value->ptr),ZIPLIST_TAIL);
+        }
+
+        o->ptr = zl;
+
+        decrRefCount(field);
+        decrRefCount(value);
+
+                    
+        // 节点数量是否超限制, 需要转码
+        if (hashTypeLength(o) > server.hash_max_ziplist_entries) {
+            hashTypeConvert(o,REDIS_ENCODING_HT);
+        }
+
+    // ht
+    } else if (o->encoding == REDIS_ENCODING_HT) {
+        // 添加
+        if (dictReplace(o->ptr,field,value)) {
+            incrRefCount(field);
+        
+        // 更新
+        } else {
+            update = 1;
+        }
+        incrRefCount(value);
+    
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+
+    return update;
+}
+
+// 删除 field
+// 成功返回 1, 否则返回 0
+int hashTypeDelete(robj *o, robj *field) {
+    int deleted = 0;
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+
+        unsigned char *zl, *fptr;
+
+        field = getDecodedObject(field);
+
+        zl = o->ptr;
+        fptr = ziplistIndex(zl,ZIPLIST_HEAD);
+        if (fptr != NULL) {
+            fptr = ziplistFind(fptr,field->ptr,sdslen(field->ptr),1);
+
+            if (fptr != NULL) {
+                zl = ziplistDelete(zl,&fptr);
+                zl = ziplistDelete(zl,&fptr);
+
+                o->ptr = zl;
+                deleted = 1;
+            }
+        }
+        decrRefCount(field);
+
+    } else if (o->encoding == REDIS_ENCODING_HT) {
+
+        if (dictDelete((dict*)o->ptr,field->ptr) == REDIS_OK) {
+            deleted = 1;
+            
+            // 字典是否需要收缩
+            if (htNeedsResize(o->ptr)) dictResize(o->ptr);
+        }
+
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+
+    return deleted;
+}
+
+// 节点数量
+unsigned long hashTypeLength(robj *o) {
+    unsigned long length = ULONG_MAX;
+
+    if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+        length = ziplistLen(o->ptr) / 2;
+
+    } else if (o->encoding == REDIS_ENCODING_HT) {
+        length = dictSize((dict*)o->ptr);
+
+    } else {
+        redisPanic("Unknown hash encoding");   
+    }
+}
+
+// 如果 key 不存在关联的哈希对象
+// 创建一个并返回
+robj *hashTypeLookupWriteOrCreate(redisClient *c, robj *key) {
+    
+    robj *o = lookupKeyWrite(c->db,key);
+
+    // 新增
+    if (o == NULL) {
+        o = createHashObject();
+        dbAdd(c->db,key,o);
+    
+    // 检查类型
+    } else {
+        if (o->type != REDIS_HASH) {
+            addReply(c,shared.wrongtypeerr);
+            return NULL;
+        }
+    }
+
+    return o;
+}
 
 /*----------------------------- 命令 ------------------------------*/

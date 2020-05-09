@@ -537,7 +537,7 @@ int hashTypeDelete(robj *o, robj *field) {
             }
         }
 
-        decrrefcount(field);
+        decrRefCount(field);
 
     } else if (o->encoding == REDIS_ENCODING_HT) {
         
