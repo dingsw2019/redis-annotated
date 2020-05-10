@@ -703,3 +703,56 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
 
     return REDIS_OK;
 }
+
+
+/*-------------------------- ziplist 编码下的有序集合 -----------------------------*/
+
+/**
+ * 取出并返回 sptr 指向的有序集合的元素的分值
+ */
+double zzlGetScore(unsigned char *sptr) {
+    unsigned char *vstr;
+    unsigned int vlen;
+    long long vlong;
+    char buf[128];
+    double score;
+
+    redisAssert(sptr != NULL);
+
+    // 提取 sptr 的值
+    redisAssert(ziplistGet(sptr,&vstr,&vlen,&vlong));
+
+    // 提取整数
+    if (vstr) {
+        // 将字符串值转换成数值
+        memcpy(buf,vstr,vlen);
+        buf[vlen] = '\0';
+        score = strtod(buf,NULL);
+
+    } else {
+        score = vlong;
+    }
+
+    return score;
+}
+
+/**
+ * 从 ziplist 编码的有序集合中查找 ele 成员, 并将其分值保存到 score
+ * 查找成功, 返回 ele 的指针
+ * 查找失败, 返回 NULL
+ */
+unsigned char *zzlFind(unsigned char *zl, robj *ele, double *score) {
+    unsigned char *sptr = ziplistIndex(zl,0), *eptr;
+
+    // ele 转换成字符串
+
+    // 遍历查找 ele 节点
+}
+
+
+/*-------------------------- sorted set 命令 -----------------------------*/
+
+// ZADD 和 ZINCRBY 的通用函数
+void zaddGenericCommand(redisClient *c, int incr) {
+
+}
