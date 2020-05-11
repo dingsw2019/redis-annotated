@@ -705,7 +705,7 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
 }
 
 
-/*-------------------------- ziplist 编码下的有序集合 -----------------------------*/
+/*-------------------------- ziplist 编码的有序集合 API -----------------------------*/
 
 /**
  * 取出并返回 sptr 指向的有序集合的元素的分值
@@ -737,16 +737,253 @@ double zzlGetScore(unsigned char *sptr) {
 }
 
 /**
+ * 取出并以 robj 格式返回 sptr 指向的有序集合的元素的分值
+ */
+robj *ziplistGetObject(unsigned char *sptr) {
+    unsigned char *vstr;
+    unsigned int vlen;
+    long long vlong;
+
+    redisAssert(sptr != NULL);
+
+    // 提取值
+    redisAssert(ziplistGet(sptr,&vstr,&vlen,&vlong));
+
+    if (vstr) {
+        return createStringObject(vstr,vlen);
+    } else {
+        return createStringObjectFromLongLong(vlong);
+    }
+}
+
+/**
+ * 将 eptr 中的元素值和 cstr 进行比对
+ * 相等返回 0
+ * eptr 的字符串比 cstr 大时, 返回正整数
+ * eptr 的字符串比 cstr 小时, 返回负整数
+ */
+int zzlCompareElements(unsigned char *eptr, unsigned char *cstr, unsigned int clen) {
+    unsigned char *vstr;
+    unsigned int vlen;
+    long long vlong;
+    unsigned char vbuf[32];
+    int cmp, minlen;
+
+    // 提取 eptr 的值
+    redisAssert(ziplistGet(eptr,&vstr,&vlen,&vlong));
+
+    // 如果值是整数, 转成字符串
+    if (vstr == NULL) {
+        vlen = ll2string((char*)vbuf,sizeof(vbuf),vlong);
+        vstr = vbuf;
+    }
+
+    // 比对
+    minlen = (vlen < clen) ? vlen : clen;
+    cmp = memcmp(vstr,cstr,minlen);
+    if (cmp == 0) return vlen - clen;
+    return cmp;
+}
+
+/*
+ * 返回跳跃表包含的元素数量
+ */
+unsigned int zzlLength(unsigned char *zl) {
+    return ziplistLen(zl)/2;
+}
+
+/**
+ * 分别获取 eptr 和 sptr 的下一个成员和分值
+ * 
+ * 如果后面没有元素了, 两个指针都返回 NULL
+ */
+void zzlNext(unsigned char *zl, unsigned char **eptr, unsigned char **sptr) {
+    unsigned char *_eptr, *_sptr;
+
+    redisAssert(*eptr != NULL && *sptr != NULL);
+
+    // 指向下一个成员
+    _eptr = ziplistNext(zl,*sptr);
+    if (_eptr != NULL) {
+        // 指向下一个分值
+        _sptr = ziplistNext(zl,_eptr);
+        redisAssert(_sptr != NULL);
+    } else {
+        _sptr = NULL;
+    }
+
+    *eptr = _eptr;
+    *sptr = _sptr;
+}
+
+/**
+ * 分别获取 eptr 和 sptr 的前一个成员和分值
+ * 
+ * 如果前面没有元素了, 两个之后都返回 NULL
+ */
+void zzlPrev(unsigned char *zl, unsigned char **eptr, unsigned char **sptr) {
+    unsigned char *_eptr, *_sptr;
+
+    redisAssert(*eptr != NULL && *sptr != NULL);
+
+    // 指向前一个分值
+    _sptr = ziplistPrev(zl,*eptr);
+    if (_sptr != NULL) {
+        // 指向前一个成员
+        _eptr = ziplistPrev(zl,_sptr);
+        redisAssert(_eptr != NULL);
+
+    } else {
+        _eptr = NULL;
+    }
+
+    *eptr = _eptr;
+    *sptr = _sptr;
+}
+
+/**
+ * 只要有一个节点在 range 指定的范围内
+ * 函数返回 1, 否则返回 0
+ */
+int zzlIsInRange(unsigned char *zl, zrangespec *range) {
+    double score;
+    unsigned char *p;
+
+    // range 范围检查
+    if (range->min > range->max || 
+        (range->min == range->max && (range->maxex || range->minex)))
+        return 0;
+
+    // 超范围, 最大值小于 range 最小值
+    p = ziplistIndex(zl,-1);
+    if (p == NULL) return 0;
+    score = zzlGetScore(p);
+    if (!zslValueGteMin(score,range)) 
+        return 0;
+
+    // 超范围, 最小值大于 range 最大值
+    p = ziplistIndex(zl,1);
+    redisAssert(p != NULL);
+    score = zzlGetScore(p);
+    if (!zslValueLteMax(score,range)) 
+        return 0;
+
+    return 1;
+}
+
+/**
+ * 返回值在给定范围的第一个节点
+ * 找到返回 成员节点的指针
+ * 未找到返回 NULL
+ */
+unsigned char *zzlFirstInRange(unsigned char *zl, zrangespec *range) {
+    unsigned char *eptr = ziplistIndex(zl,0), *sptr;
+    double score;
+
+    redisAssert(eptr != NULL);
+
+    // 是否存在 range 范围的节点
+    if (!zzlIsInRange(zl,range)) return NULL;
+
+    // 遍历节点
+    while (eptr != NULL) {
+
+        // 定位分值
+        sptr = ziplistNext(zl,eptr);
+        redisAssert(sptr != NULL);
+
+        // 提取分值
+        score = zzlGetScore(sptr);
+
+        // 大于range的节点
+        if (zslValueGteMin(score,range)) {
+            // 小于 range的最大值
+            if (zslValueLteMax(score,range))
+                return eptr;
+            return NULL;
+        }
+
+        // 下一个节点
+        eptr = ziplistNext(zl,sptr);
+    }
+
+    return NULL;
+}
+
+/**
+ * 返回值在给定范围的最后一个节点
+ * 找到返回成员节点的指针
+ * 未找到返回 NULL
+ */
+unsigned char *zzlLastInRange(unsigned char *zl, zrangespec *range) {
+    unsigned char *eptr = ziplistIndex(zl,-2), *sptr;
+    double score;
+
+    // 判断 range 范围内是否有节点
+    if (!zzlIsInRange(zl,range)) return NULL;
+
+    // 遍历节点
+    while (eptr != NULL) {
+
+        // 分值节点
+        sptr = ziplistNext(zl,eptr);
+        redisAssert(sptr != NULL);
+
+        // 提取分值
+        score = zzlGetScore(sptr);
+
+        // 比对分值, 是否在 range 范围内
+        if (zslValueLteMax(score,range)) {
+
+            if (zslValueGteMin(score,range))
+                return eptr;
+            return NULL;
+        }
+
+        // 下一个成员节点
+        sptr = ziplistPrev(zl,eptr);
+        if (sptr != NULL) {
+            redisAssert(ziplistPrev(eptr = ziplistPrev(zl,sptr)) != NULL);
+        } else {
+            eptr = NULL;
+        }
+    }
+
+    return NULL;
+}
+
+/**
  * 从 ziplist 编码的有序集合中查找 ele 成员, 并将其分值保存到 score
  * 查找成功, 返回 ele 的指针
  * 查找失败, 返回 NULL
  */
 unsigned char *zzlFind(unsigned char *zl, robj *ele, double *score) {
-    unsigned char *sptr = ziplistIndex(zl,0), *eptr;
+    unsigned char *eptr = ziplistIndex(zl,0), *sptr;
 
     // ele 转换成字符串
+    ele = getDecodedObject(ele);
 
     // 遍历查找 ele 节点
+    while (eptr != NULL) {
+
+        // 确定 ele 的分值
+        sptr = ziplistNext(zl,eptr);
+        redisAssertWithInfo(NULL,ele,sptr != NULL);
+
+        // 找到 ele
+        if (ziplistCompare(eptr,ele->ptr,sdslen(ele->ptr))) {
+            if (score != NULL) *score = zzlGetScore(eptr);
+            decrRefCount(ele);
+            return eptr;
+        }
+
+        // 移动到下一个 ele
+        eptr = ziplistNext(zl,sptr);
+    }
+
+    decrRefCount(ele);
+
+    return NULL;
 }
 
 
