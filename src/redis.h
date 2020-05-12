@@ -441,6 +441,12 @@ typedef struct
     int minex, maxex;
 } zrangespec;
 
+// 字符范围搜索器
+typedef struct {
+    robj *min, *max;
+    int minex, maxex;
+} zlexrangespec;
+
 /*-----------------------------------------------------------------------------
  * Extern declarations
  *----------------------------------------------------------------------------*/

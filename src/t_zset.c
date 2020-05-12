@@ -649,6 +649,7 @@ zskiplistNode* zslGetElementByRank(zskiplist *zsl, unsigned long rank) {
     return NULL;
 }
 
+
 /* Populate the rangespec according to the objects min and max. 
  *
  * 对 min 和 max 进行分析，并将区间的值保存在 spec 中。
@@ -704,6 +705,128 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
     return REDIS_OK;
 }
 
+/*-------------------------- 字符范围搜索器 API -----------------------------*/
+/**
+ * 字符串比较, 包含对字符串长度的检查
+ */
+int compareStringObjectsForLexRange(robj *a, robj *b) {
+    if (a == b) return 0;
+
+    if (a == shared.minstring || b == shared.maxstring) return -1;
+    if (a == shared.maxstring || b == shared.minstring) return 1;
+
+    return compareStringObjects(a,b);
+}
+
+/**
+ * 字符串 value 大于(或等于) spec 的最小值
+ * 大于, 返回 1
+ * 小于, 返回 0
+ */
+static int zslLexValueGteMin(robj *value, zlexrangespec *spec) {
+    return spec->minex ?
+        (compareStringObjectsForLexRange(value,spec->min) > 0)  :
+        (compareStringObjectsForLexRange(value,spec->min) >= 0) ;
+}
+
+/**
+ * 字符串 value 小于(或等于) spec 的最大值
+ * 小于, 返回 1
+ * 大于, 返回 0
+ */
+static int zslLexValueLteMax(robj *value, zlexrangespec *spec) {
+    return spec->maxex ?
+        (compareStringObjectsForLexRange(value,spec->max) < 0) :
+        (compareStringObjectsForLexRange(value,spec->max) <= 0) ;
+}
+
+/**
+ * 如果 zsl 在 range 指定范围内, 是否存在节点
+ * 存在节点, 返回 1
+ * 不存在, 返回 0
+ */
+int zslIsInLexRange(zskiplist *zsl, zlexrangespec *range) {
+    zskiplistNode *x;
+
+    // 范围搜索器校验
+    if (compareStringObjectsForLexRange(range->min,range->maxex) > 1 ||
+        (compareStringObjectsForLexRange(range->min,range->max) == 0 && 
+            (range->minex || range->maxex)))
+            return 0;
+
+    // 超出范围,zsl 在范围左侧
+    x = zsl->tail;
+    if (x == NULL || !zslLexValueGteMin(x->obj,range))
+        return 0;
+
+    // 超出范围,zsl 在范围右侧
+    x = zsl->header;
+    if (x == NULL || !zslLexValueLteMax(x->obj,range))
+        return 0;
+
+    return 1;
+}
+
+/**
+ * 返回 range 范围内的第一个节点的地址
+ * 不存在返回 NULL
+ */
+zskiplistNode *zslFirstInLexRange(zskiplist *zsl, zlexrangespec *range) {
+    zskiplistNode *x;
+    int i;
+
+    // 在 range 范围内, 无节点
+    if (!zslIsInLexRange(zsl,range)) return NULL;
+
+    // 迭代节点
+    x = zsl->header;
+    for (i = zsl->level-1; i >= 0; i--) {
+
+        // 跳过不在范围内的节点
+        while (x->level[i].forward && 
+                !zslLexValueGteMin(x->level[i].forward->obj,range)) {
+                    x = x->level[i].forward;
+        }
+    }
+
+    // 找到第一个满足范围的节点
+    x = x->level[0].forward;
+    redisAssert(x != NULL);
+
+    // 是否满足小于范围的最大值
+    if (!zslLexValueLteMax(x->obj,range)) return NULL;
+
+    return x;
+}
+
+/**
+ * 返回 range 范围内的最后一个节点的地址
+ * 不存在返回 NULL
+ */
+zskiplistNode *zslLastInLexRange(zskiplist *zsl, zlexrangespec *range) {
+    zskiplistNode *x;
+    int i;
+
+    // 无节点在 range 范围内
+    if (!zslIsInLexRange(zsl,range)) return NULL;
+
+    // 遍历查找最后一个节点
+    x = zsl->header;
+    for (i = zsl->level-1; i >= 0; i--) {
+        
+        while (x->level[i].forward && 
+            zslLexValueLteMax(x->level[i].forward->obj,range)) {
+                x = x->level[i].forward;
+        }
+    }
+
+    redisAssert(x != NULL);
+
+    // 检查最后一个节点是否大于 范围最小值
+    if (!zslLexValueGteMin(x->obj,range)) return NULL;
+
+    return x;
+}
 
 /*-------------------------- ziplist 编码的有序集合 API -----------------------------*/
 

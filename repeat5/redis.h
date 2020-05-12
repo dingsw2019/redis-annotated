@@ -404,7 +404,7 @@ typedef struct zset {
 
 } zset;
 
-// 范围搜索器
+// 数字范围搜索器
 typedef struct zrangespec {
 
     double min, max;
@@ -412,6 +412,12 @@ typedef struct zrangespec {
     // 1 表示不包含 , 0 包含
     int minex, maxex;
 } zrangespec;
+
+// 字符范围搜索器
+typedef struct {
+    robj *min, *max;
+    int minex, maxex;
+} zlexrangespec;
 
 
 
