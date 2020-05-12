@@ -1319,7 +1319,34 @@ unsigned char *zzlInsert(unsigned char *zl, robj *ele, double score) {
  * 返回处理完成的 zl 首地址
  */
 unsigned char *zzlDeleteRangeByScore(unsigned char *zl, zrangespec *range, unsigned long *deleted) {
+    unsigned char *eptr, *sptr;
+    double score;
+    unsigned long num = 0;
 
+    if (deleted != NULL) *deleted = 0;
+
+    // 找到第一个大于 range 的节点
+    eptr = zzlFirstInRange(zl,range);
+    if (eptr == NULL) return zl;
+
+    while ((sptr = ziplistNext(zl,eptr)) != NULL) {
+
+        // 提取分值
+        score = zzlGetScore(sptr);
+
+        // 删除 range 范围内的值
+        if (zslValueLteMax(score,range)) {
+            zl = ziplistDelete(zl,&eptr);
+            zl = ziplistDelete(zl,&eptr);
+
+            num++;
+        } else {
+            break;
+        }
+    }
+
+    if (deleted != NULL) *deleted = num;
+    return zl;
 }
 
 /**
@@ -1330,7 +1357,29 @@ unsigned char *zzlDeleteRangeByScore(unsigned char *zl, zrangespec *range, unsig
  * 返回处理完成的 zl 首地址
  */
 unsigned char *zzlDeleteRangeByLex(unsigned char *zl, zlexrangespec *range, unsigned long *deleted) {
+    unsigned char *eptr, *sptr;
+    unsigned long num = 0;
 
+    if (deleted != NULL) *deleted = 0;
+
+    // range 范围内的第一个节点
+    eptr = zzlFirstInLexRange(zl,range);
+    if (eptr == NULL) return zl;
+
+    // 迭代删除 range 范围内的节点
+    while ((sptr = ziplistNext(zl,eptr)) != NULL) {
+
+        if (zzlLexValueLteMax(eptr,range)) {
+            zl = ziplistDelete(zl,&eptr);
+            zl = ziplistDelete(zl,&eptr);
+            num++;
+        } else {
+            break;
+        }
+    }
+
+    if (deleted != NULL) *deleted = num;
+    return zl;
 }
 
 /**
@@ -1341,7 +1390,16 @@ unsigned char *zzlDeleteRangeByLex(unsigned char *zl, zlexrangespec *range, unsi
  * 返回处理完成的 zl 首地址
  */
 unsigned char *zzlDeleteRangeByRank(unsigned char *zl, unsigned int start, unsigned int end, unsigned long *deleted) {
+    // 计算要删除的节点数量
+    unsigned int num = (end-start)+1;
 
+    if (deleted) *deleted = num;
+
+    // rank 第一位索引是 1, ziplist 第一位索引是 0, 所以 start-1 才是ziplist的索引位
+    // 索引,元素数量分别 *2, 是因为 ziplist 的 ele,score 存在两个节点中
+    zl = ziplistDeleteRange(zl,2*(start-1),num*2);
+
+    return zl;
 }
 
 /*-------------------------- sorted set 命令 -----------------------------*/
