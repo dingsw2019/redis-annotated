@@ -824,7 +824,6 @@ zskiplistNode *zslLastInLexRange(zskiplist *zsl, zlexrangespec *range) {
 
     // 检查最后一个节点是否大于 范围最小值
     if (!zslLexValueGteMin(x->obj,range)) return NULL;
-
     return x;
 }
 
@@ -1076,6 +1075,121 @@ unsigned char *zzlLastInRange(unsigned char *zl, zrangespec *range) {
 }
 
 /**
+ * 节点字符串是否大于 spec.min 的字符串
+ * 大于, 返回 1
+ * 小于, 返回 0
+ */
+static int zzlLexValueGteMin(unsigned char *p, zlexrangespec *spec) {
+    // 获取 p 节点
+    robj *value = ziplistGetObject(p);
+
+    // 比对
+    int res = zslLexValueGteMin(value,spec);
+    decrRefCount(value);
+    return res;
+}
+
+/**
+ * 节点字符串是否小于 spec.max 的字符串
+ * 小于, 返回 1
+ * 大于, 返回 0
+ */
+static int zzlLexValueLteMax(unsigned char *p, zlexrangespec *spec) {
+    robj *value = ziplistGetObject(p);
+    int res = zslLexValueLteMax(value,spec);
+    decrRefCount(value);
+    return res;
+}
+
+/**
+ * zl 的成员节点 在 range 指定范围是否存在节点
+ * 按成员进行范围查询时, 使用
+ * 存在, 返回 1
+ * 不存在, 返回 0
+ */
+int zzlIsInLexRange(unsigned char *zl, zlexrangespec *range) {
+    unsigned char *p;
+    // 范围搜索器检查
+    if (compareStringObjectsForLexRange(range->min,range->max) > 0 ||
+        (compareStringObjectsForLexRange(range->min,range->max) == 0 && 
+            (range->minex || range->maxex))) {
+                return 0;
+    }
+
+    // 超范围, zl 在范围左侧
+    p = ziplistIndex(zl,-2);
+    if (p == NULL || !zzlLexValueGteMin(p,range))
+        return 0;
+
+    // 超范围, zl 在范围右侧
+    p = ziplistIndex(zl,0);
+    if (p == NULL || !zzlLexValueLteMax(p,range))
+        return 0;
+
+    return 1;
+}
+
+/**
+ * 在 range 范围内的第一个成员节点
+ * 未找到返回 NULL
+ */
+unsigned char *zzlFirstInLexRange(unsigned char *zl, zlexrangespec *range) {
+    unsigned char *eptr = ziplistIndex(zl,0), *sptr;
+
+    // zl 在 range 范围内无节点
+    if (!zzlIsInLexRange(zl,range)) return NULL;
+
+    // 查找第一个满足 range 的节点
+    while (eptr != NULL) {
+
+        // 确定边界
+        if (zzlLexValueGteMin(eptr,range)) {
+            if (zzlLexValueLteMax(eptr,range))
+                return eptr;
+            return NULL;
+        }
+
+        // 指向下一个成员节点
+        sptr = ziplistNext(zl,eptr);
+        redisAssert(sptr != NULL);
+        eptr = ziplistNext(zl,sptr);
+    }
+
+    return NULL;
+}
+
+/**
+ * 在 range 范围内的最后一个成员节点
+ * 未找到返回 NULL
+ */
+unsigned char *zzlLastInLexRange(unsigned char *zl, zlexrangespec *range) {
+    unsigned char *eptr = ziplistIndex(zl,-2), *sptr;
+
+    // zl 在 range 范围内无节点
+    if (!zzlIsInLexRange(zl,range)) return NULL;
+
+    while (eptr != NULL) {
+
+        if (zzlLexValueLteMax(eptr,range)) {
+            if (zzlLexValueGteMin(eptr,range)) {
+                return eptr;
+            }
+            return NULL;
+        }
+
+        // 指向下一个成员节点
+        sptr = ziplistPrev(zl,eptr);
+        if (sptr != NULL) {
+            redisAssert((eptr = ziplistPrev(zl,sptr)) != NULL);
+        } else {
+            eptr = NULL;
+        }
+    }
+
+    return NULL;
+}
+
+/**
  * 从 ziplist 编码的有序集合中查找 ele 成员, 并将其分值保存到 score
  * 查找成功, 返回 ele 的指针
  * 查找失败, 返回 NULL
@@ -1109,6 +1223,126 @@ unsigned char *zzlFind(unsigned char *zl, robj *ele, double *score) {
     return NULL;
 }
 
+/**
+ * 从 ziplist 中删除 eptr 说指向的有序集合的元素 (包括成员和分值)
+ */
+unsigned char *zzlDelete(unsigned char *zl, unsigned char *eptr) {
+    unsigned char *p = eptr;
+
+    zl = ziplistDelete(zl,&p);
+    zl = ziplistDelete(zl,&p);
+    return zl;
+}
+
+/**
+ * 将成员和分值(ele,score), 添加到 eptr 之前
+ * 如果 eptr 为空, 添加到 zl 末端
+ */
+unsigned char *zzlInsertAt(unsigned char *zl, unsigned char *eptr, robj *ele, double score) {
+    unsigned char *sptr;
+    char scorebuf[128];
+    int scorelen;
+    size_t offset;
+
+    // score 转换成字符串
+    redisAssertWithInfo(NULL,ele,sdsEncodedObject(ele));
+    scorelen = d2string(scorebuf,sizeof(scorebuf),score);
+
+    // 末端添加
+    if (eptr == NULL) {
+        zl = ziplistPush(zl,ele->ptr,sdslen(ele->ptr),ZIPLIST_TAIL);
+        zl = ziplistPush(zl,(unsigned char*)scorebuf,scorelen,ZIPLIST_TAIL);
+
+    // 添加到 eptr 之前
+    } else {
+        // 添加成员
+        offset = eptr - zl;
+        zl = ziplistInsert(zl,eptr,ele->ptr,sdslen(ele->ptr));
+        eptr = zl + offset;
+
+        // 添加分值
+        redisAssertWithInfo(NULL,ele,(sptr = ziplistNext(zl,eptr)) != NULL);
+        zl = ziplistInsert(zl,sptr,(unsigned char*)scorebuf,scorelen);
+    }
+
+    return zl;
+}
+
+/**
+ * 将 ele 和 score 添加到 ziplist 里面
+ * 
+ * 按照 score 从小到大的顺序添加
+ */
+unsigned char *zzlInsert(unsigned char *zl, robj *ele, double score) {
+    unsigned char *eptr = ziplistIndex(zl,0), *sptr;
+    double s;
+
+    ele = getDecodedObject(ele);
+
+    // 遍历查找 score
+    while (eptr != NULL) {
+        // 节点分值
+        sptr = ziplistNext(zl,eptr);
+        redisAssertWithInfo(NULL,ele,sptr != NULL);
+        // 提取分值
+        s = zzlGetScore(sptr);
+
+        // 添加
+        if (s > score) {
+            zl = zzlInsertAt(zl,eptr,ele,score);
+            break;
+
+        // 按成员添加
+        } else if (s == score) {
+            if (zzlCompareElements(eptr,ele->ptr,sdslen(ele->ptr)) > 0) {
+                zl = zzlInsertAt(zl,eptr,ele,score);
+                break;
+            }
+        }
+
+        // score 大于当前节点分值, 跳过
+        eptr = ziplistNext(zl,sptr);
+    }
+
+    if (eptr == NULL) 
+        zl = zzlInsertAt(zl,NULL,ele,score);
+
+    decrRefCount(ele);
+    return zl;
+}
+
+/**
+ * 删除 ziplist 中分值在指定范围的元素
+ * 
+ * 将删除元素数量写入 deleted
+ * 
+ * 返回处理完成的 zl 首地址
+ */
+unsigned char *zzlDeleteRangeByScore(unsigned char *zl, zrangespec *range, unsigned long *deleted) {
+
+}
+
+/**
+ * 删除 ziplist 中成员在指定范围的元素
+ * 
+ * 将删除元素数量写入 deleted
+ * 
+ * 返回处理完成的 zl 首地址
+ */
+unsigned char *zzlDeleteRangeByLex(unsigned char *zl, zlexrangespec *range, unsigned long *deleted) {
+
+}
+
+/**
+ * 按元素的索引 删除 ziplist 中的成员
+ * 
+ * 删除元素数量写入 deleted
+ * 
+ * 返回处理完成的 zl 首地址
+ */
+unsigned char *zzlDeleteRangeByRank(unsigned char *zl, unsigned int start, unsigned int end, unsigned long *deleted) {
+
+}
 
 /*-------------------------- sorted set 命令 -----------------------------*/
 
