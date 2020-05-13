@@ -1402,6 +1402,139 @@ unsigned char *zzlDeleteRangeByRank(unsigned char *zl, unsigned int start, unsig
     return zl;
 }
 
+
+/*-------------------------- 通用 sorted set 方法 -----------------------------*/
+/**
+ * 有序集合节点数量
+ */
+unsigned int zsetLength(robj *zobj) {
+    int length = -1;
+
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        length = zzlLength(zobj->ptr);
+
+    } else if (zobj->encoding == REDIS_ENCODING_SKIPLIST) {
+        length = ((zset*)zobj->ptr)->zsl->length;
+
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    return length;
+}
+
+/**
+ * 内部编码转换
+ */
+void zsetConvert(robj *zobj, int encoding) {
+    zset *zs;
+    zskiplistNode *node, *next;
+    robj *ele;
+    double score;
+
+    // ZIPLIST 转 SKIPLIST
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *zl = zobj->ptr;
+        unsigned char *eptr, *sptr;
+        unsigned char *vstr;
+        unsigned int vlen;
+        long long vlong;
+        
+        if (encoding != REDIS_ENCODING_SKIPLIST)
+            redisPanic("Unknown target encoding");
+
+        // 创建空 skiplist
+        zs = zmalloc(sizeof(*zs));
+        zs->dict = dictCreate(&zsetDictType,NULL);
+        zs->zsl = zslCreate();
+
+        // 第一个节点的成员和分值
+        eptr = ziplistIndex(zobj->ptr,0);
+        redisAssertWithInfo(NULL,zobj,eptr != NULL);
+        sptr = ziplistNext(zobj->ptr,eptr);
+        redisAssertWithInfo(NULL,zobj,sptr != NULL);
+
+        // 拷贝节点
+        while (eptr != NULL) {
+            // 提取分值
+            score = zzlGetScore(sptr);
+
+            // 提取成员
+            redisAssertWithInfo(NULL,zobj,ziplistGet(eptr,&vstr,&vlen,&vlong));
+            if (vstr) {
+                ele = createStringObject(vstr,vlen);
+            } else {
+                ele = createStringObjectFromLongLong(vlong);
+            }
+
+            // 添加到 skiplist
+            node = zslInsert(zs->zsl,score,ele);
+            redisAssertWithInfo(NULL,zobj,dictAdd(zs->dict,ele,&node->score) == DICT_OK);
+            incrRefCount(ele);
+
+            // 下一个节点
+            zzlNext(zl,&eptr,&sptr);
+        }
+
+        // 更新编码
+        zobj->encoding = REDIS_ENCODING_SKIPLIST;
+
+        // 释放 ziplist 结构
+        zfree(zobj->ptr);
+
+        // 绑定 skiplist 结构
+        zobj->ptr = zs;
+
+    // SKIPLIST 转 ZIPLIST
+    } else if (zobj->encoding == REDIS_ENCODING_SKIPLIST) {
+
+        // 创建 ziplist
+        unsigned char *zl = ziplistNew();
+
+        if (encoding != REDIS_ENCODING_ZIPLIST)
+            redisPanic("Unknown target encoding");
+
+        zs = zobj->ptr;
+
+        // 释放字典
+        dictRelease(zs->dict);
+
+        // 指向第一个节点
+        node = zs->zsl->header->level[0].forward;
+
+        // 释放跳跃表表头
+        zfree(zs->zsl->header);
+        zfree(zs->zsl);
+
+        // 拷贝节点
+        while (node) {
+
+            ele = getDecodedObject(node->obj);
+
+            // 添加节点到 ziplist
+            zl = zzlInsertAt(zl,NULL,ele,node->score);
+            decrRefCount(ele);
+
+            // 下一个节点, 释放当前节点
+            next = node->level[0].forward;
+            zslFreeNode(node);
+            node = next;
+        }
+
+        // 更新编码
+        zobj->encoding = REDIS_ENCODING_ZIPLIST;
+
+        // 释放 skiplist
+        zfree(zs);
+
+        // 绑定 ziplist
+        zobj->ptr = zl;
+
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+}
+
 /*-------------------------- sorted set 命令 -----------------------------*/
 
 // ZADD 和 ZINCRBY 的通用函数
