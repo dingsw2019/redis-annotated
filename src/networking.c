@@ -66,6 +66,10 @@ void setDeferredMultiBulkLength(redisClient *c, void *node, long length) {
 
 }
 
+void addReplyDouble(redisClient *c, double d) {
+
+}
+
 // 修改单个参数
 void rewriteClientCommandArgument(redisClient *c, int i, robj *newval) {
 

@@ -501,7 +501,7 @@ void addReplyMultiBulkLen(redisClient *c, long length);
 void addReplyBulkCString(redisClient *c, char *s);
 void addReplyBulkCBuffer(redisClient *c, void *p, size_t len);
 void addReplyBulkLongLong(redisClient *c, long long ll);
-
+void addReplyDouble(redisClient *c, double d);
 void addReplyLongLong(redisClient *c, long long ll);
 
 void rewriteClientCommandArgument(redisClient *c, int i, robj *newval);

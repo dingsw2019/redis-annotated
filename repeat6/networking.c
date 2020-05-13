@@ -67,6 +67,10 @@ void *addDeferredMultiBulkLength(redisClient *c) {
     
 }
 
+void addReplyDouble(redisClient *c, double d) {
+
+}
+
 void setDeferredMultiBulkLength(redisClient *c, void *node, long length) {
 
 }
