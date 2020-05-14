@@ -2368,3 +2368,181 @@ void zrangebyscoreCommand(redisClient *c) {
 void zrevrangebyscoreCommand(redisClient *c) {
     genericZrangebyscoreCommand(c,1);
 }
+
+// ZCOUNT key min max
+void zcountCommand(redisClient *c) {
+    robj *key = c->argv[1];
+    robj *zobj;
+    zrangespec range;
+    int count = 0;
+
+    // 创建范围搜索器
+    if (zslParseRange(c->argv[2],c->argv[3],&range) != REDIS_OK) {
+        addReplyError(c,"min or max is not a float");
+        return;
+    }
+
+    // 取出有序集合对象
+    if ((zobj = lookupKeyReadOrReply(c,key,shared.czero)) == NULL ||
+        checkType(c,zobj,REDIS_ZSET)) return;
+
+    // 计算范围内节点数量
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *zl = zobj->ptr;
+        unsigned char *eptr, *sptr;
+        double score;
+
+        // 起始节点
+        eptr = zzlFirstInRange(zl,&range);
+
+        if (eptr == NULL) {
+            addReply(c,shared.czero);
+            return;
+        }
+
+        sptr = ziplistNext(zl,eptr);
+        score = zzlGetScore(sptr);
+        redisAssertWithInfo(c,zobj,zslValueLteMax(score,&range));
+
+        // 遍历到结束节点
+        while (eptr) {
+            score = zzlGetScore(sptr);
+            // 超出范围
+            if (!zslValueLteMax(score,&range)) {
+                break;
+            
+            // 未超出范围
+            } else {
+                // 统计节点数量
+                count++;
+
+                // 指向下一个节点
+                zzlNext(zl,&eptr,&sptr);
+            }
+        }
+        
+
+    } else if (zobj->encoding == REDIS_ENCODING_SKIPLIST) {
+        zset *zs = zobj->ptr;
+        zskiplist *zsl = zs->zsl;
+        zskiplistNode *zn;
+        unsigned long rank;
+
+        // 起始节点
+        zn = zslFirstInRange(zsl,&range);
+
+        if (zn != NULL) {
+            // 起始节点的索引值
+            rank = zslGetRank(zsl,zn->score,zn->obj);
+
+            // 计算 count
+            count = zsl->length - (rank - 1);
+
+            // 结束节点
+            zn = zslLastInRange(zsl,&range);
+
+            if (zn != NULL) {
+
+                // 结束节点的索引值
+                rank = zslGetRank(zsl,zn->score,zn->obj);
+
+                // 计算 count
+                count -= (zsl->length - rank);
+            }
+        }
+
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    // 回复客户端
+    addReplyLongLong(c,count);
+}
+
+// ZLEXCOUNT key min max
+void zlexcountCommand(redisClient *c) {
+    robj *key = c->argv[1];
+    robj *zobj;
+    zlexrangespec range;
+    int count = 0;
+
+    // 生成范围搜索器
+    if (zslParseLexRange(c->argv[2],c->argv[3],&range) != REDIS_OK) {
+        addReplyError(c,"min or max not valid string range item");
+        return;
+    }
+
+    // 取出有序集合对象
+    if ((zobj = lookupKeyReadOrReply(c,key,shared.czero)) != NULL ||
+        checkType(c,zobj,REDIS_ZSET))
+    {
+        zslFreeLexRange(&range);
+        return;
+    }
+
+    // 计算范围内的节点数量
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *zl = zobj->ptr;
+        unsigned char *eptr, *sptr;
+        
+        // 开始节点
+        eptr = zzlFirstInLexRange(zl,&range);
+        if (eptr == NULL) {
+            zslFreeLexRange(&range);
+            addReply(c,shared.czero);
+            return;
+        }
+        sptr = ziplistNext(zl,eptr);
+        redisAssertWithInfo(c,zobj,zzlLexValueLteMax(eptr,&range));
+
+        // 遍历查找结束节点
+        while (eptr) {
+            // 是否超范围
+            if (!zzlLexValueLteMax(eptr,&range)) {
+                break;
+            
+            } else {
+                // 统计节点数量
+                count++;
+
+                // 指向下一个节点
+                zzlNext(zl,&eptr,&sptr);
+            }
+        }
+
+    } else if (zobj->encoding == REDIS_ENCODING_SKIPLIST) {
+        zset *zs = zobj->ptr;
+        zskiplist *zsl = zs->zsl;
+        zskiplistNode *zn;
+        unsigned long rank;
+
+        // 起始节点
+        zn = zslFirstInLexRange(zsl,&range);
+
+        if (zn != NULL) {
+            // 起始节点的索引值
+            rank = zslGetRank(zsl,zn->score,zn->obj);
+
+            // 计算 count
+            count = zsl->length - (rank - 1);
+            
+            // 结束节点
+            zn = zslLastInLexRange(zsl,&range);
+
+            if (zn != NULL) {
+                // 结束节点的索引值
+                rank = zslGetRank(zsl,zn->score,zn->obj);
+
+                // 计算 count
+                count -= (zsl->length - rank);
+            }
+        }
+
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    zslFreeLexRange(&range);
+    // 回复客户端
+    addReplyLongLong(c,count);
+}
