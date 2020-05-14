@@ -2051,6 +2051,604 @@ void zremrangebylexCommand(redisClient *c) {
     zremrangeGenericCommand(c,ZRANGE_LEX);
 }
 
+
+/*
+ * 多态集合迭代器：可迭代集合或者有序集合
+ */
+typedef struct {
+
+    // 被迭代的对象
+    robj *subject;
+
+    // 对象的类型
+    int type; /* Set, sorted set */
+
+    // 编码
+    int encoding;
+
+    // 权重
+    double weight;
+
+    union {
+        /* Set iterators. */
+        // 集合迭代器
+        union _iterset {
+            // intset 迭代器
+            struct {
+                // 被迭代的 intset
+                intset *is;
+                // 当前节点索引
+                int ii;
+            } is;
+            // 字典迭代器
+            struct {
+                // 被迭代的字典
+                dict *dict;
+                // 字典迭代器
+                dictIterator *di;
+                // 当前字典节点
+                dictEntry *de;
+            } ht;
+        } set;
+
+        /* Sorted set iterators. */
+        // 有序集合迭代器
+        union _iterzset {
+            // ziplist 迭代器
+            struct {
+                // 被迭代的 ziplist
+                unsigned char *zl;
+                // 当前成员指针和当前分值指针
+                unsigned char *eptr, *sptr;
+            } zl;
+            // zset 迭代器
+            struct {
+                // 被迭代的 zset
+                zset *zs;
+                // 当前跳跃表节点
+                zskiplistNode *node;
+            } sl;
+        } zset;
+    } iter;
+} zsetopsrc;
+
+#define OPVAL_DIRTY_ROBJ 1
+#define OPVAL_DIRTY_LL 2
+#define OPVAL_VALID_LL 4
+
+/** 
+ * 用于保存从迭代器里取得的值的结构
+ */
+typedef struct {
+
+    int flags;
+
+    unsigned char _buf[32]; /* Private buffer. */
+
+    // 可以用于保存 member 的几个类型
+    robj *ele;
+    unsigned char *estr;
+    unsigned int elen;
+    long long ell;
+
+    // 分值
+    double score;
+
+} zsetopval;
+
+// 类型别名
+typedef union _iterset iterset;
+typedef union _iterzset iterzset;
+
+/**
+ * 初始化迭代器
+ */
+void zuiInitIterator(zsetopsrc *op) {
+
+    if (op->subject == NULL)
+        return;
+
+    // 集合
+    if (op->type == REDIS_SET) {
+
+        iterset *it = &op->iter.set;
+
+        if (op->encoding == REDIS_ENCODING_INTSET) {
+            it->is.is = op->subject->ptr;
+            it->is.ii = 0;
+
+        } else if (op->encoding == REDIS_ENCODING_HT) {
+            it->ht.dict = op->subject->ptr;
+            it->ht.di = dictGetIterator(op->subject->ptr);
+            it->ht.de = dictNext(it->ht.di);
+
+        } else {
+            redisPanic("Unknown set encoding");
+        }
+
+    // 有序集合
+    } else if (op->type == REDIS_ZSET) {
+
+        iterzset *it = &op->iter.zset;
+
+        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
+            it->zl.zl = op->subject->ptr;
+            it->zl.eptr = ziplistIndex(it->zl.zl,0);
+            if (it->zl.eptr != NULL) {
+                it->zl.sptr = ziplistNext(it->zl.zl,it->zl.eptr);
+                redisAssert(it->zl.sptr != NULL);
+            }
+
+        } else if (op->encoding == REDIS_ENCODING_SKIPLIST) {
+            it->sl.zs = op->subject->ptr;
+            it->sl.node = it->sl.zs->zsl->header->level[0].forward;
+
+        } else {
+            redisPanic("Unknown sorted set encoding");
+        }
+
+    } else {
+        redisPanic("Unsupported type");
+    }
+}
+
+/**
+ * 清空迭代器
+ */
+void zuiClearIterator(zsetopsrc *op) {
+    if (op->subject == NULL)
+        return;
+
+    // 集合
+    if (op->type == REDIS_SET) {
+
+        iterset *it = &op->iter.set;
+
+        if (op->encoding == REDIS_ENCODING_INTSET) {
+            REDIS_NOTUSED(it);
+
+        } else if (op->encoding == REDIS_ENCODING_HT) {
+            dictReleaseIterator(it->ht.di);
+
+        } else {
+            redisPanic("Unknown set encoding");
+        }
+
+    // 有序集合
+    } else if (op->type == REDIS_ZSET) {
+
+        iterzset *it = &op->iter.zset;
+
+        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
+            REDIS_NOTUSED(it);
+
+        } else if (op->encoding == REDIS_ENCODING_SKIPLIST) {
+            REDIS_NOTUSED(it);
+
+        } else {
+            redisPanic("Unknown sorted set encoding");
+        }
+
+    } else {
+        redisPanic("Unsupported type");
+    }
+}
+
+/**
+ * 返回正在被迭代的元素的长度
+ */
+int zuiLength(zsetopsrc *op) {
+    if (op->subject == NULL)
+        return;
+
+    // 集合
+    if (op->type == REDIS_SET) {
+
+        iterset *it = &op->iter.set;
+
+        if (op->encoding == REDIS_ENCODING_INTSET) {
+            return intsetLen(it->is.is);
+
+        } else if (op->encoding == REDIS_ENCODING_HT) {
+            dict *ht = op->subject->ptr;
+            return dictSize(ht);
+
+        } else {
+            redisPanic("Unknown set encoding");
+        }
+
+    // 有序集合
+    } else if (op->type == REDIS_ZSET) {
+
+        iterzset *it = &op->iter.zset;
+
+        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
+            return zzlLength(it->zl.zl);
+
+        } else if (op->encoding == REDIS_ENCODING_SKIPLIST) {
+            zset *zs = op->subject->ptr;
+            return zs->zsl->level;
+
+        } else {
+            redisPanic("Unknown sorted set encoding");
+        }
+
+    } else {
+        redisPanic("Unsupported type");
+    }
+}
+
+/**
+ * 将当前元素写入 val, 将指针指向下一个元素
+ * 如果当前元素不合法, 返回 0, 否则返回 1
+ */
+int zuiNext(zsetopsrc *op, zsetopval *val) {
+    if (op->subject == NULL)
+        return 0;
+
+    // 清理上一个节点
+    if (val->flags & OPVAL_DIRTY_ROBJ)
+        decrRefCount(val->ele);
+    
+    memset(val,0,sizeof(zsetopval));
+    
+    // 集合
+    if (op->type == REDIS_SET) {
+
+        iterset *it = &op->iter.set;
+
+        if (op->encoding == REDIS_ENCODING_INTSET) {
+            int64_t ell;
+
+            // 取出节点成员
+            if (!intsetGet(it->is.is,it->is.ii,&ell))
+                return 0;
+            
+            val->ell = ell;
+            val->score = 1.0;
+
+            // 移动指针到下一个节点
+            it->is.ii++;
+
+        } else if (op->encoding == REDIS_ENCODING_HT) {
+
+            if (it->ht.de == NULL)
+                return 0;
+
+            val->ele = dictGetKey(it->ht.de);
+            val->score = 1.0;
+
+            it->ht.de = dictNext(it->ht.di);
+
+        } else {
+            redisPanic("Unknown set encoding");
+        }
+
+    // 有序集合
+    } else if (op->type == REDIS_ZSET) {
+
+        iterzset *it = &op->iter.zset;
+
+        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
+
+            if (it->zl.eptr == NULL || it->zl.sptr == NULL)
+                return 0;
+            
+            redisAssert(ziplistGet(it->zl.eptr,&val->estr,&val->elen,&val->ell));
+
+            val->score = zzlGetScore(it->zl.sptr);
+            
+            zzlNext(it->zl.zl,&it->zl.eptr,&it->zl.sptr);
+
+        } else if (op->encoding == REDIS_ENCODING_SKIPLIST) {
+            
+            if (it->sl.node == NULL)
+                return 0;
+
+            val->ele = it->sl.node->obj;
+            val->score = it->sl.node->score;
+
+            it->sl.node = it->sl.node->level[0].forward;
+
+        } else {
+            redisPanic("Unknown sorted set encoding");
+        }
+
+    } else {
+        redisPanic("Unsupported type");
+    }
+}
+
+/**
+ * 从 val 中取出 long long 值
+ * 将 estr, ele 中的整数值提取到 ell 中
+ */
+int zuiLongLongFromValue(zsetopval *val) {
+
+    if (!(val->flags & OPVAL_DIRTY_LL)) {
+
+        // 打开标识
+        val->flags |= OPVAL_DIRTY_LL;
+
+        if (val->ele != NULL) {
+            if (val->ele->encoding == REDIS_ENCODING_INT) {
+                val->ell = (long)val->ele->ptr;
+                val->flags |= OPVAL_VALID_LL;
+
+            } else if (sdsEncodedObject(val->ele)) {
+                if (string2ll(val->ele->ptr,sdslen(val->ele->ptr),&val->ell))
+                    val->flags |= OPVAL_VALID_LL;
+                
+            } else {
+                redisPanic("Unsupported element encoding");
+            }
+
+        } else if (val->estr != NULL) {
+            // 将节点值转换成整数
+            if (string2ll((char*)val->estr,val->elen,&val->ell))
+                val->flags |= OPVAL_VALID_LL;
+
+        } else {
+            val->flags |= OPVAL_VALID_LL;
+        }
+    }
+
+    return val->flags & OPVAL_VALID_LL;
+}
+
+/**
+ * 将 estr, ell 的值转换成 robj 存入 ele 中
+ */
+robj *zuiObjectFromValue(zsetopval *val) {
+    if (val->ele == NULL) {
+
+        if (val->estr != NULL) {
+            val->ele = createStringObject(val->estr,val->elen);
+        } else {
+            val->ele = createStringObjectFromLongDouble(val->ell);
+        }
+
+        val->flags |= OPVAL_DIRTY_ROBJ;
+    }
+
+    return val->ele;
+}
+
+/**
+ * 从 val 中取出字符串
+ */
+int zuiBufferFromValue(zsetopval *val) {
+
+    if (val->estr != NULL) {
+        if (val->ele != NULL) {
+            if (val->ele->encoding == REDIS_ENCODING_INT) {
+                val->elen = ll2string((char*)val->_buf,sizeof(val->_buf),val->ell);
+                val->estr = val->_buf;
+
+            } else if (sdsEncodedObject(val->ele)) {
+                val->elen = sdslen(val->ele->ptr);
+                val->estr = val->ele->ptr;
+
+            } else {
+                redisPanic("Unsupported element encoding");
+            }
+        } else {
+            val->elen = ll2string((char*)val->_buf,sizeof(val->_buf),val->ell);
+            val->estr = val->_buf;
+        }
+    }
+
+    return 1;
+}
+
+/**
+ * 迭代器中的节点是否存在于其对象中
+ * 存在返回 1, 否则返回 0
+ */
+int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
+    if (op->subject == NULL)
+        return 0;
+
+    // 集合
+    if (op->type == REDIS_SET) {
+
+        if (op->encoding == REDIS_ENCODING_INTSET) {
+            if (zuiLongLongFromValue(val) && 
+                intsetFind(op->subject->ptr,val->ell))
+            {
+                *score = 1.0;
+                return 1;
+            } else {
+                return 0;
+            }
+
+        } else if (op->encoding == REDIS_ENCODING_HT) {
+            dict *ht = op->subject->ptr;
+            zuiObjectFromValue(val);
+            if (dictFind(ht,val->ele) != NULL) 
+            {   
+                *score = 1.0;
+                return 1;
+            } else {
+                return 0;
+            }
+
+        } else {
+            redisPanic("Unknown set encoding");
+        }
+
+    // 有序集合
+    } else if (op->type == REDIS_ZSET) {
+        zuiObjectFromValue(val);
+
+        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
+            if (zzlFind(op->subject->ptr,val->ele,score) != NULL) {
+                return 1;
+            } else {
+                return 0;
+            }
+
+        } else if (op->encoding == REDIS_ENCODING_SKIPLIST) {
+            zset *zs = op->subject->ptr;
+            dictEntry *de;
+            
+            if (dictFind(zs->dict,val->ele) != NULL) {
+                *score = *(double*)dictGetVal(de);
+                return 1;
+            } else {
+                return 0;
+            }
+
+        } else {
+            redisPanic("Unknown sorted set encoding");
+        }
+
+    } else {
+        redisPanic("Unsupported type");
+    }
+}
+
+/**
+ * 对比两个被迭代对象的节点数量
+ */
+int zuiCompareByCardinality(const void *s1, const void *s2) {
+    return zuiLength((zsetopsrc*)s1) - zuiLength((zsetopsrc*)s2);
+}
+
+#define REDIS_AGGR_SUM 1
+#define REDIS_AGGR_MIN 2
+#define REDIS_AGGR_MAX 3
+#define zunionInterDictValue(_e) (dictGetVal(_e) == NULL ? 1.0 : *(double*)dictGetVal(_e))
+
+/**
+ * 根据 aggregate 对 target 和 val 做相应的聚合计算
+ */
+inline static void zunionInterAggregate(double *target, double val, int aggregate) {
+
+    if (aggregate == REDIS_AGGR_SUM) {
+        *target = *target + val;
+
+        if (isnan(*target)) *target = 0.0;
+
+    } else if (aggregate == REDIS_AGGR_MIN) {
+        *target = (val < *target) ? val : *target;
+
+    } else if (aggregate == REDIS_AGGR_MAX) {
+        *target = (val > *target) ? val : *target;
+
+    } else {
+        redisPanic("Unknown ZUNION/INTER aggregate type");
+    }
+}
+
+
+void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
+    int i,j;
+    long setnum;
+    int aggregate = REDIS_AGGR_SUM;
+    zsetopsrc *src;
+    zsetopval zval;
+    robj *tmp;
+    unsigned int maxelelen = 0;
+    robj *dstobj;
+    zset *dstzset;
+    zskiplistNode *znode;
+    int touched = 0;
+
+    // 提取 numkeys 参数
+    if (getLongFromObjectOrReply(c,c->argv[2],&setnum,NULL) != REDIS_OK)
+        return;
+
+    // setnum 检查
+    if (setnum < 1) {
+        addReplyError(c,
+            "at least 1 input key is needed for ZUNIONSTORE/ZINTERSTORE");
+        return;
+    }
+    if (setnum > c->argc - 3) {
+        addReply(c,shared.syntaxerr);
+        return;
+    }
+
+    // 构建 keys 的迭代器
+    src = zmalloc(sizeof(zsetopsrc) * setnum);
+    for (i = 0, j = 3; i < setnum; i++, j++) {
+        // 获取有序集合对象
+        robj *obj = lookupKeyWrite(c->db,c->argv[j]);
+
+        // 生成迭代器
+        if (obj != NULL) {
+            // 类型判断
+            if (obj->type != REDIS_ZSET && obj->type != REDIS_SET) {
+                zfree(src);
+                addReply(c,shared.wrongtypeerr);
+                return;
+            }
+            
+            src[i].subject = tmp;
+            src[i].type = tmp->type;
+            src[i].encoding = tmp->encoding;
+            
+        } else {
+            src[i].subject = NULL;
+        }
+
+        // 默认权重, 后面可能改
+        src[i].weight = 1.0;
+    }
+
+    // 获取其他参数
+    if (j < c->argc) {
+        int remaining = c->argc - j;
+
+        while (remaining) {
+
+            // weights
+            if (remaining >= (setnum+1) && !strcasecmp(c->argv[j],"weights")) {
+                j++; remaining--;
+                // 获取权重值
+                for (i = 0; i < setnum; i++) {
+                    if (getDoubleFromObjectOrReply(c,c->argv[j],&src[i].weight,
+                            "weight value is not a float") != REDIS_OK)
+                    {
+                        zfree(src);
+                        return;
+                    }
+                }
+            // aggregate
+            } else if (remaining >= 2 && !strcasecmp(c->argv[j],"aggregate")) {
+                j++; remaining--;
+                if (!strcasecmp(c->argv[j],"sum")) {
+                    aggregate = REDIS_AGGR_SUM;
+
+                } else if (!strcasecmp(c->argv[j],"min")) {
+                    aggregate = REDIS_AGGR_MIN;
+                    
+                } else if (!strcasecmp(c->argv[j],"max")) {
+                    aggregate = REDIS_AGGR_MAX;
+                    
+                } else {
+                    zfree(src);
+                    addReply(c,shared.syntaxerr);
+                    return;
+                }
+                j++; remaining--;
+
+            } else {
+                zfree(src);
+                addReply(c,shared.syntaxerr);
+                return;
+            }
+        }
+    }
+
+    // 对所有集合进行排序, 以减少算法的常数项
+    qsort(src,setnum,sizeof(zsetopsrc),zuiCompareByCardinality);
+
+    // 创建 dst 有序集合
+    dstobj = createZsetObject();
+}
+
 /*-------------------------- uninstore interstore 命令 -----------------------------*/
 
 void zrangeGenericCommand(redisClient *c, int reverse) {

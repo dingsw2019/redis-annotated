@@ -333,6 +333,8 @@ struct sharedObjectsStruct {
 #define REDIS_LOG_RAW (1<<10) /* Modifier to log without timestamp */
 #define REDIS_DEFAULT_VERBOSITY REDIS_NOTICE
 
+#define REDIS_NOTUSED(V) ((void) V)
+
 /*--------------------- 压缩列表 -----------------------*/
 
 #define ZSKIPLIST_MAXLEVEL 32
