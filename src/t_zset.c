@@ -2546,3 +2546,322 @@ void zlexcountCommand(redisClient *c) {
     // 回复客户端
     addReplyLongLong(c,count);
 }
+
+
+void genericZrangebylexCommand(redisClient *c, int reverse) {
+    zlexrangespec range;
+    robj *key = c->argv[1];
+    robj *zobj;
+    long offset = 0, limit = -1;
+    unsigned long rangelen = 0;
+    void *replylen = NULL;
+    int minidx, maxidx;
+
+    // min 和 max 的位置
+    if (reverse) {
+        minidx = 3; maxidx = 2;
+    } else {
+        minidx = 2; maxidx = 3;
+    }
+
+    // 生成范围搜索器
+    if (zslParseLexRange(c->argv[minidx],c->argv[maxidx],&range) != REDIS_OK) {
+        addReplyError(c,"min or max not valid string range item");
+        return;
+    }
+
+    // 取出其他属性
+    if (c->argc > 4) {
+        int remaining = c->argc - 4;
+        int pos = 4;
+
+        while (remaining) {
+            if (remaining >= 3 && !strcasecmp(c->argv[pos]->ptr,"limit")) {
+                if ((getLongFromObjectOrReply(c,c->argv[pos+1],&offset,NULL) != REDIS_OK) ||
+                    (getLongFromObjectOrReply(c,c->argv[pos+2],&limit,NULL) != REDIS_OK)) return;
+                pos += 3; remaining -= 3;
+            } else {
+                zslFreeLexRange(&range);
+                addReply(c,shared.syntaxerr);
+                return;
+            }
+        }
+    }
+
+    // 取出有序集合对象
+    if ((zobj = lookupKeyReadOrReply(c,key,shared.emptymultibulk)) == NULL ||
+        checkType(c,zobj,REDIS_ZSET)) 
+    {
+        zslFreeLexRange(&range);
+        return;
+    }
+
+    // 取出范围内的节点, 返回给客户端
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *zl = zobj->ptr;
+        unsigned char *eptr, *sptr;
+        unsigned char *vstr;
+        unsigned int vlen;
+        long long vlong;
+
+        // 起始节点
+        if (reverse) {
+            eptr = zzlLastInLexRange(zl,&range);
+        } else {
+            eptr = zzlFirstInLexRange(zl,&range);
+        }
+        if (eptr == NULL) {
+            addReply(c,shared.emptymultibulk);
+            zslFreeLexRange(&range);
+            return;
+        }
+        redisAssertWithInfo(c,zobj,eptr != NULL);
+        sptr = ziplistNext(zl,eptr);
+        
+        replylen = addDeferredMultiBulkLength(c);
+
+        // 跳过 offset
+        while (eptr && offset--) {
+            if (reverse) {
+                zzlPrev(zl,&eptr,&sptr);
+            } else {
+                zzlNext(zl,&eptr,&sptr);
+            }
+        }
+
+        // 提取节点, 并回复客户端
+        while (eptr && limit--) {
+            // 超出范围, 退出
+            if (reverse) {
+                if (!zzlLexValueGteMin(eptr,&range)) break;
+            } else {
+                if (!zzlLexValueLteMax(eptr,&range)) break;
+            }
+
+            // 回复客户端
+            redisAssertWithInfo(c,zobj,ziplistGet(eptr,&vstr,&vlen,&vlong));
+            rangelen++;
+            if (vstr) {
+                addReplyBulkCBuffer(c,vstr,vlen);
+            } else {
+                addReplyLongLong(c,vlong);
+            }
+
+            // 下一个节点
+            if (reverse) {
+                zzlPrev(zl,&eptr,&sptr);
+            } else {
+                zzlNext(zl,&eptr,&sptr);
+            }
+        }
+
+    } else if (zobj->encoding == REDIS_ENCODING_SKIPLIST) {
+        zset *zs = zobj->ptr;
+        zskiplist *zsl = zs->zsl;
+        zskiplistNode *zn;
+
+        // 起始节点
+        if (reverse) {
+            zn = zslLastInLexRange(zsl,&range);
+        } else {
+            zn = zslFirstInLexRange(zsl,&range);
+        }
+        if (zn == NULL) {
+            addReply(c,shared.emptymultibulk);
+            zslFreeLexRange(&range);
+            return;
+        }
+
+        replylen = addDeferredMultiBulkLength(c);
+
+        // 跳过节点
+        while (zn && offset--) {
+            if (reverse) {
+                zn = zn->backward;
+            } else {
+                zn = zn->level[0].forward;
+            }
+        }
+
+        // 范围内节点, 回复客户端
+        while (zn && limit--) {
+            // 节点超范围, 退出
+            if (reverse) {
+                if (!zslLexValueGteMin(zn->obj,&range)) break;
+            } else {
+                if (!zslLexValueLteMax(zn->obj,&range)) break;
+            }
+
+            rangelen++;
+            // 成员发送给客户端
+            addReplyBulk(c,zn->obj);
+
+            // 下一个节点
+            if (reverse) {
+                zn = zn->backward;
+            } else {
+                zn = zn->level[0].forward;
+            }
+        }
+
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    zslFreeLexRange(&range);
+    setDeferredMultiBulkLength(c, replylen, rangelen);
+}
+
+// ZRANGEBYLEX key min max [LIMIT offset count]
+void zrangebylexCommand(redisClient *c) {
+    genericZrangebylexCommand(c,0);
+}
+
+// ZREVRANGEBYLEX key max min [LIMIT offset count]
+void zrevrangebylexCommand(redisClient *c) {
+    genericZrangebylexCommand(c,1);
+}
+
+// ZCARD key
+void zcardCommand(redisClient *c) {
+    robj *zobj;
+    robj *key = c->argv[1];
+
+    // 取出有序集合对象
+    if ((zobj = lookupKeyReadOrReply(c,key,shared.czero)) == NULL ||
+        checkType(c,zobj,REDIS_ZSET)) return;
+
+    // 取出长度
+    addReplyLongLong(c,zsetLength(zobj));
+}
+
+// ZSCORE key member
+// 返回指定成员的分值
+void zscoreCommand(redisClient *c) {
+    robj *key = c->argv[1];
+    robj *zobj,*ele;
+    double score;
+
+    // 取出有序集合对象
+    if ((zobj == lookupKeyReadOrReply(c,key,shared.nullbulk)) == NULL ||
+        checkType(c,zobj,REDIS_ZSET)) return;
+
+    // 查找 member 的分值
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        
+        if (zzlFind(zobj->ptr, c->argv[2], &score) != NULL) {
+            addReplyDouble(c,score);
+        } else {
+            addReply(c,shared.nullbulk);
+        }
+
+    } else if (zobj->encoding == REDIS_ENCODING_SKIPLIST) {
+        zset *zs = zobj->ptr;
+        dictEntry *de;
+
+        c->argv[2] = tryObjectEncoding(c->argv[2]);
+
+        de = dictFind(zs->dict,c->argv[2]);
+        if (de != NULL) {
+            score = *(double*)dictGetVal(de);
+            addReplyDouble(c,score);
+
+        } else {
+            addReply(c,shared.nullbulk);
+        }
+
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+}
+
+void zrankGenericCommand(redisClient *c, int reverse) {
+    robj *key = c->argv[1];
+    robj *ele = c->argv[2];
+    robj *zobj;
+    unsigned long llen;
+    unsigned long rank;
+
+    // 取出有序集合的对象
+    if ((zobj = lookupKeyReadOrReply(c,key,shared.nullbulk)) == NULL ||
+        checkType(c,zobj,REDIS_ZSET)) return;
+
+    // 节点数量
+    llen = zsetLength(zobj);
+
+    redisAssertWithInfo(c,ele,sdsEncodedObject(ele));
+
+    // 计算成员的索引值
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *zl = zobj->ptr;
+        unsigned char *eptr, *sptr;
+
+        // 起始节点的成员和分值
+        eptr = ziplistIndex(zl,0);
+        redisAssertWithInfo(c,zobj,eptr != NULL);
+        sptr = ziplistNext(zl,eptr);
+        redisAssertWithInfo(c,zobj,sptr != NULL);
+
+        // 查找目标成员, 计算索引
+        rank = 1;
+        while(eptr != NULL) {
+            if (ziplistCompare(eptr,ele->ptr,sdslen(ele->ptr)))
+               break;
+            rank++;
+            zzlNext(zl,&eptr,&sptr);
+        }
+
+        // 回复客户端
+        if (eptr != NULL) {
+            if (reverse) {
+                addReplyLongLong(c,llen-rank);
+            } else {
+                addReplyLongLong(c,rank-1);
+            }
+        } else {
+            addReply(c,shared.nullbulk);
+        }
+
+    } else if (zobj->encoding == REDIS_ENCODING_SKIPLIST) {
+        zset *zs = zobj->ptr;
+        zskiplist *zsl = zs->zsl;
+        dictEntry *de;
+        double score;
+
+        // 获取节点
+        ele = c->argv[2] = tryObjectEncoding(c->argv[2]);
+        de = dictFind(zs->dict,ele);
+
+        if (de != NULL){
+
+            // 取索引值
+            score = *(double*)dictGetVal(de);
+            rank = zslGetRank(zsl,score,ele);
+            redisAssertWithInfo(c,ele,rank);
+
+            // 回复客户端
+            if (reverse) {
+                addReplyLongLong(c,llen-rank);
+            } else {
+                addReplyLongLong(c,rank-1);
+            }
+
+        } else {
+            addReply(c,shared.nullbulk);
+        }
+
+    } else {
+        redisPanic("Unknwon sorted set encoding");
+    }
+}
+
+// ZRANK key member
+// 获取成员的索引值(正序)
+void zrankCommand(redisClient *c) {
+    zrankGenericCommand(c,0);
+}
+
+// ZREVRANK key member
+void zrevrankCommand(redisClient *c) {
+    zrankGenericCommand(c,1);
+}
