@@ -2443,6 +2443,7 @@ int zuiBufferFromValue(zsetopval *val) {
 
 /**
  * 迭代器中的节点是否存在于其对象中
+ * 并取出分值放入 score
  * 存在返回 1, 否则返回 0
  */
 int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
@@ -2571,7 +2572,7 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
     }
 
     // 构建 keys 的迭代器
-    src = zmalloc(sizeof(zsetopsrc) * setnum);
+    src = zcalloc(sizeof(zsetopsrc) * setnum);
     for (i = 0, j = 3; i < setnum; i++, j++) {
         // 获取有序集合对象
         robj *obj = lookupKeyWrite(c->db,c->argv[j]);
@@ -2584,10 +2585,10 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
                 addReply(c,shared.wrongtypeerr);
                 return;
             }
-            
-            src[i].subject = tmp;
-            src[i].type = tmp->type;
-            src[i].encoding = tmp->encoding;
+
+            src[i].subject = obj;
+            src[i].type = obj->type;
+            src[i].encoding = obj->encoding;
             
         } else {
             src[i].subject = NULL;
@@ -2604,10 +2605,10 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
         while (remaining) {
 
             // weights
-            if (remaining >= (setnum+1) && !strcasecmp(c->argv[j],"weights")) {
+            if (remaining >= (setnum+1) && !strcasecmp(c->argv[j]->ptr,"weights")) {
                 j++; remaining--;
                 // 获取权重值
-                for (i = 0; i < setnum; i++) {
+                for (i = 0; i < setnum; i++, j++, remaining--) {
                     if (getDoubleFromObjectOrReply(c,c->argv[j],&src[i].weight,
                             "weight value is not a float") != REDIS_OK)
                     {
@@ -2616,15 +2617,15 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
                     }
                 }
             // aggregate
-            } else if (remaining >= 2 && !strcasecmp(c->argv[j],"aggregate")) {
+            } else if (remaining >= 2 && !strcasecmp(c->argv[j]->ptr,"aggregate")) {
                 j++; remaining--;
-                if (!strcasecmp(c->argv[j],"sum")) {
+                if (!strcasecmp(c->argv[j]->ptr,"sum")) {
                     aggregate = REDIS_AGGR_SUM;
 
-                } else if (!strcasecmp(c->argv[j],"min")) {
+                } else if (!strcasecmp(c->argv[j]->ptr,"min")) {
                     aggregate = REDIS_AGGR_MIN;
                     
-                } else if (!strcasecmp(c->argv[j],"max")) {
+                } else if (!strcasecmp(c->argv[j]->ptr,"max")) {
                     aggregate = REDIS_AGGR_MAX;
                     
                 } else {
@@ -2647,6 +2648,156 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
 
     // 创建 dst 有序集合
     dstobj = createZsetObject();
+    dstzset = dstobj->ptr;
+    memset(&zval,0,sizeof(zval));
+
+    // ZINTERSTORE 命令
+    if (op == REDIS_OP_INTER) {
+
+        if (zuiLength(&src[0]) > 0) {
+
+            // 遍历 src[0] 的节点
+            zuiInitIterator(&src[0]);
+            while(zuiNext(&src[0],&zval)) {
+                double score, value;
+
+                // 计算加权分值
+                score = src[0].weight * zval.score;
+                if (isnan(score)) score = 0;
+
+                // 查找相同节点, 并进行聚合计算
+                for (j = 1; j < setnum; j++) {
+                    // 集合相同, 直接聚合吧
+                    if (src[0].subject == src[j].subject) {
+                        value = zval.score * src[j].weight;
+                        zunionInterAggregate(&score,value,aggregate);
+
+                    // 节点相同
+                    } else if (zuiFind(&src[j],&zval,&value)) {
+                        value *= src[j].weight;
+                        zunionInterAggregate(&score,value,aggregate);
+
+                    } else {
+                        break;
+                    }
+                }
+
+                // 存储相同节点
+                if (j == setnum) {
+
+                    // 取出成员
+                    tmp = zuiObjectFromValue(&zval);
+
+                    // 添加节点
+                    znode = zslInsert(dstzset->zsl,score,tmp);
+                    incrRefCount(tmp);
+                    dictAdd(dstzset->dict,tmp,&znode->score);
+                    incrRefCount(tmp);
+
+                    // 最长字符串
+                    if (sdsEncodedObject(tmp)) {
+                        if (sdslen(tmp->ptr) > maxelelen)
+                            maxelelen = sdslen(tmp->ptr);
+                    }   
+                }
+            }
+            zuiClearIterator(&src[0]);
+        }
+
+    // ZUNIONSTORE 命令
+    } else if (op == REDIS_OP_UNION) {
+
+        // 遍历集合
+        for (i = 0; i < setnum; i++) {
+
+            // 跳过空集合
+            if (zuiLength(&src[i]) == 0) continue;
+
+            // 遍历节点
+            zuiInitIterator(&src[i]);
+            while (zuiNext(&src[i],&zval)) {
+                double score, value;
+
+                // 跳过已处理元素
+                if (dictFind(dstzset->dict,zuiObjectFromValue(&zval)) != NULL)
+                    continue;
+
+                score = zval.score * src[i].weight;
+                if (isnan(score)) score = 0;
+
+                // 相同节点, 进行聚合计算
+                for (j = (i+1); j < setnum; j++) {
+                    if (src[j].subject == src[i].subject) {
+                        value = zval.score * src[j].weight;
+                        zunionInterAggregate(&score,value,aggregate);
+
+                    } else if (zuiFind(&src[j],&zval,&value)) {
+                        value *= src[j].weight;
+                        zunionInterAggregate(&score,value,aggregate);
+                    }
+                }
+
+                // 存储节点
+                tmp = zuiObjectFromValue(&zval);
+
+                znode = zslInsert(dstzset->zsl,score,tmp);
+                incrRefCount(zval.ele);
+                dictAdd(dstzset->dict,tmp,&znode->score);
+                incrRefCount(zval.ele);
+
+                // 更新最大字符串长度
+                if (sdsEncodedObject(tmp)) {
+                    if (sdslen(tmp->ptr) > maxelelen)
+                        maxelelen = sdslen(tmp->ptr);
+                }
+            }
+            zuiClearIterator(&src[i]);
+        }
+
+    } else {
+        redisPanic("Unknown operator");
+    }
+
+    // 删除已存在的 dstkey
+    if (dbDelete(c->db,dstkey)) {
+        signalModifiedKey(c->db,dstkey);
+        touched = 1;
+        server.dirty++;
+    }
+
+    // 关联结果集
+    if (dstzset->zsl->length) {
+
+        // 是否转码
+        if (dstzset->zsl->length <= server.zset_max_ziplist_entries &&
+            maxelelen <= server.zset_max_ziplist_value)
+                zsetConvert(dstobj,REDIS_ENCODING_ZIPLIST);
+
+        // 关联数据库
+        dbAdd(c->db,dstkey,dstobj);
+
+        // 回复客户端
+        addReplyLongLong(c,zsetLength(dstobj));
+
+        if (!touched) signalModifiedKey(c->db,dstkey);
+
+        notifyKeyspaceEvent(REDIS_NOTIFY_ZSET,
+            (op == REDIS_OP_UNION) ? "zunionstore" : "zinterstore",
+            dstkey,c->db->id);
+
+        server.dirty++;
+    
+    // 空结果集
+    } else {
+        decrRefCount(dstobj);
+
+        addReply(c,shared.czero);
+
+        if (touched)
+            notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",dstkey,c->db->id);
+    }
+
+    zfree(src);
 }
 
 /*-------------------------- uninstore interstore 命令 -----------------------------*/
