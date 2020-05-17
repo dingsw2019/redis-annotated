@@ -293,6 +293,9 @@ struct redisServer {
     // 每秒调用的次数
     int hz;
 
+    // 数据库
+    redisDb *db;
+
     // 最近一次 SAVE 后, 数据库被修改的次数
     long long dirty;
 
@@ -307,6 +310,50 @@ struct redisServer {
 
     // 用于 BLPOP, BRPOP, BRPOPLPUSH 
     list *ready_keys;
+
+    int dbnum; // 数据库的个数
+
+    // 值为真时, 表示服务器正在进行载入
+    int loading;
+
+    // 当前正在执行 EVAL 命令的客户端, 如果没有就是 NULL
+    redisClient *lua_caller;
+
+    // lua 脚本的执行时限
+    mstime_t lua_time_limit;
+
+    // 脚本开始执行的时间
+    mstime_t lua_time_start;
+
+    // 主服务器的验证密码
+    char *masterauth;
+    // 主服务器的地址
+    char *masterhost;
+    // 主服务器的端口
+    int masterport;
+
+    // 已过期的键数量
+    long long stat_expiredkeys;
+
+    // 成功查找键的次数
+    long long stat_keyspace_hits;
+
+    // 查找键失败的次数
+    long long stat_keyspace_misses;
+
+    // 负责执行 BGSAVE 的子进程的 ID
+    // 没在执行 BGSAVE 时, 设为 -1
+    pid_t rdb_child_pid;
+
+    struct saveparam *saveparam;
+    int saveparamslen;
+    char *rdb_filename;
+
+    // 负责进行 AOF 重写的子进程 ID
+    pid_t aof_child_pid;
+
+    /* Cluster 集群 */
+    int cluster_enabled; // 是否开启集群
 };
 
 // 通过复用来减少内存碎片, 以及减少操作耗时的共享对象

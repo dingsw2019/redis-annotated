@@ -216,6 +216,20 @@ static int _dictKeyIndex(dict *d,const void *key){
 }
 
 /**
+ * 清空字典上的所有的哈希表节点, 并重置字典属性
+ */
+void dictEmpty(dict *d, void(callback)(void*)) {
+
+    // 删除两个哈希表上的所有节点
+    _dictClear(d,&d->ht[0],callback);
+    _dictClear(d,&d->ht[1],callback);
+
+    // 重置属性
+    d->rehashidx = -1;
+    d->iterators = 0;
+}
+
+/**
  * 根据需要，初始化字典的哈希表，或者对字典现有的哈希表进行扩容
  */
 static int _dictExpandIfNeeded(dict *d){

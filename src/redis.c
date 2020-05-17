@@ -25,6 +25,8 @@
 
 struct sharedObjectsStruct shared;
 
+struct redisServer server; 
+
 dictType setDictType = {
     NULL,            /* dictEncObjHash hash function */
     NULL,                      /* key dup */

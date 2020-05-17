@@ -141,6 +141,14 @@ typedef struct dictIterator {
         entry->v.val = (_val_); \
 }while(0)
 
+// 将一个有符号整数设为节点的值
+#define dictSetSignedIntegerVal(entry, _val_) \
+    do { entry->v.s64 = _val_; } while(0)
+
+// 将一个无符号整数设为节点的值
+#define dictSetUnsignedIntegerVal(entry, _val_) \
+    do { entry->v.u64 = _val_; } while(0)
+
 // 释放给定字典节点的键
 #define dictFreeKey(d, entry) \
     if ((d)->type->keyDestructor) \
@@ -166,6 +174,10 @@ typedef struct dictIterator {
 #define dictGetKey(he) ((he)->key)
 // 返回节点的值
 #define dictGetVal(he) ((he)->v.val)
+// 返回获取给定节点的有符号整数值
+#define dictGetSignedIntegerVal(he) ((he)->v.s64)
+// 返回给定节点的无符号整数值
+#define dictGetUnsignedIntegerVal(he) ((he)->v.u64)
 // 返回字典已用的节点数
 #define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
 // 查看字典是否正在 rehash
