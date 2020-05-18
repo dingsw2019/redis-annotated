@@ -743,3 +743,71 @@ void pexpireCommand(redisClient *c) {
 void pexpireatCommand(redisClient *c) {
     expireGenericCommand(c,0,UNIT_MILLISECONDS);
 }
+
+/**
+ * 返回键的剩余生存时间, 返回 -1 代表键是永久的, -2 表示键不存在
+ * output_ms 为 1 时, 返回毫秒
+ * output_ms 为 0 时, 返回秒
+ */
+void ttlGenericCommand(redisClient *c, int output_ms) {
+    long long expire, ttl = -1;
+
+    // 取出键
+    if (lookupKeyRead(c->db,c->argv[1]) == NULL) {
+        addReplyLongLong(c,-2);
+        return;
+    }
+    
+    // 取出过期时间
+    expire = getExpire(c->db,c->argv[1]);
+    
+    // 计算剩余时间
+    if (expire != -1) {
+        ttl = expire - mstime();
+        if (ttl < 0) ttl = 0;
+    }
+
+    if (ttl == -1) {
+        // 持久键
+        addReplyLongLong(c,-1);
+
+    } else {
+        // 返回 ttl
+        addReplyLongLong(c,output_ms ? ttl : ((ttl+500)/1000));
+    }
+}
+
+// TTL key
+void ttlCommand(redisClient *c) {
+    ttlGenericCommand(c,0);
+}
+
+// PTTL key
+void pttlCommand(redisClient *c) {
+    ttlGenericCommand(c,1);
+}
+
+// PERSIST key, 移除过期时间
+void persistCommand(redisClient *c) {
+    dictEntry *de;
+
+    // 取出键
+    de = dictFind(c->db->dict,c->argv[1]->ptr);
+
+    if (de == NULL) {
+        // 键不存在, 返回
+        addReply(c,shared.czero);
+
+    } else {
+        // 移除过期时间
+        if (removeExpire(c->db,c->argv[1])) {
+            addReply(c,shared.cone);
+            server.dirty++;
+
+        // 持久键, 返回
+        } else {
+            addReply(c,shared.czero);
+        }
+    }
+}
+
