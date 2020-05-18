@@ -70,6 +70,10 @@ void addReplyDouble(redisClient *c, double d) {
 
 }
 
+void addReplyStatus(redisClient *c, char *status) {
+    
+}
+
 // 修改单个参数
 void rewriteClientCommandArgument(redisClient *c, int i, robj *newval) {
 

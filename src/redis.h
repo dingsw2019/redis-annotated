@@ -340,7 +340,12 @@ struct redisServer {
 
     // 查找键失败的次数
     long long stat_keyspace_misses;
+    
+    /* AOF */
+    // 负责进行 AOF 重写的子进程 ID
+    pid_t aof_child_pid;
 
+    /* RDB */
     // 负责执行 BGSAVE 的子进程的 ID
     // 没在执行 BGSAVE 时, 设为 -1
     pid_t rdb_child_pid;
@@ -349,8 +354,8 @@ struct redisServer {
     int saveparamslen;
     char *rdb_filename;
 
-    // 负责进行 AOF 重写的子进程 ID
-    pid_t aof_child_pid;
+    // 最后一次完成 SAVE 的时间
+    time_t lastsave;
 
     /* Cluster 集群 */
     int cluster_enabled; // 是否开启集群

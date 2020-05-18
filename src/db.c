@@ -465,11 +465,45 @@ void randomkeyCommand(redisClient *c) {
 
 // KEYS pattern
 void keysCommand(redisClient *c) {
+    dictIterator *di;
+    dictEntry *de;
 
+    // 取出模式字符串
+    sds pattern = c->argv[1]->ptr;
+    int plen = sdslen(pattern), allkeys;
+    unsigned long numkeys = 0;
+
+    // 申请回复客户端的 buffer
+    void *replylen = addDeferredMultiBulkLength(c);
+
+    allkeys = (pattern[0] == '*' && pattern[1] == '\0');
+    
+    // 遍历数据库, 返回名字和模式匹配的键
+    di = dictGetSafeIterator(c->db->dict);
+    while ((de = dictNext(di)) != NULL) {
+        sds key = dictGetKey(de);
+        robj *keyobj;
+
+        if (allkeys || stringmatchlen(pattern,plen,key,sdslen(key),0)) {
+            // 匹配成功, 向客户端发送键
+            keyobj = createStringObject(key,sdslen(key));
+
+            // 未过期的键才能返回客户端
+            if (expireIfNeeded(c->db,keyobj) == 0) {
+                addReply(c,keyobj);
+                numkeys++;
+            }
+
+            decrRefCount(keyobj);
+        }
+    }
+
+    // 释放迭代器
+    dictReleaseIterator(di);
+
+    // 回复客户端
+    setDeferredMultiBulkLength(c,replylen,numkeys);
 }
-
-
-
 
 int parseScanCursorOrReply(redisClient *c, robj *o, unsigned long *cursor) {
 
@@ -479,6 +513,42 @@ int parseScanCursorOrReply(redisClient *c, robj *o, unsigned long *cursor) {
 void scanGenericCommand(redisClient *c, robj *o, unsigned long cursor) {
     
 }
+
+// 当前数据库节点数量
+void dbsizeCommand(redisClient *c) {
+    addReplyLongLong(c,dictSize(c->db->dict));
+}
+
+// 返回最后一次同步磁盘的时间戳
+void lastsaveCommand(redisClient *c) {
+    addReplyLongLong(c,server.lastsave);
+}
+
+// 获取 key 的存储类型
+void typeCommand(redisClient *c) {
+    robj *o;
+    char *type;
+
+    o = lookupKeyRead(c->db,c->argv[1]);
+
+    if (o == NULL) {
+        type = "none";
+    } else {
+        switch(o->type){
+        case REDIS_STRING: type = "string"; break;
+        case REDIS_LIST: type = "list"; break;
+        case REDIS_SET: type = "set"; break;
+        case REDIS_ZSET: type = "zset"; break;
+        case REDIS_HASH: type = "hash"; break;
+        default: type = "unknown"; break;
+        }
+    }
+
+    addReplyStatus(c,type);
+}
+
+
+/*------------------------- Expires API --------------------------*/
 
 /**
  * 移除键的过期时间
@@ -584,4 +654,92 @@ int expireIfNeeded(redisDb *db, robj *key) {
 
     // 从数据库删除过期键
     return dbDelete(db,key);
+}
+
+/*------------------------- Expires Commands --------------------------*/
+
+/**
+ * 处理各种过期时间
+ * basetime 在 *AT命令下给 0, 其他情况给 UINX 时间戳, 总是毫秒
+ * unit 为时间单位 SECONDS or MILLISECONDS
+ */
+void expireGenericCommand(redisClient *c, long long basetime, int unit) {
+    robj *key = c->argv[1], *param = c->argv[2];
+    long long when;
+
+    // 取出时间
+    if (getLongLongFromObjectOrReply(c,param,&when,NULL) != REDIS_OK)
+        return;
+
+    // 程序已毫秒形式存储时间戳, 
+    // 如果设置为秒, 将其转为毫秒
+    if (unit == UNIT_SECONDS) when *= 1000;
+
+    // 计算时间戳
+    when += basetime;
+
+    // 取出键
+    if (lookupKeyRead(c->db,key) == NULL) {
+        addReply(c,shared.czero);
+        return;
+    }
+
+    if (when <= mstime() && !server.loading && !server.masterhost) {
+
+        // 时间已过期, 服务器为主节点, 并且未加载数据
+        robj *aux;
+
+        redisAssertWithInfo(c,key,dbDelete(c->db,key));
+        server.dirty++;
+
+        // 传播 DEL 命令
+        aux = createStringObject("DEL",3);
+
+        rewriteClientCommandVector(c,2,aux,key);
+        decrRefCount(aux);
+
+        signalModifiedKey(c->db,key);
+        notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",key,c->db->id);
+
+        addReply(c,shared.cone);
+
+        return;
+
+    } else {
+        // 存储过期时间
+        setExpire(c->db,key,when);
+
+        // 回复客户端
+        addReply(c,shared.cone);
+
+        // 发送通知
+        signalModifiedKey(c->db,key);
+        notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"expire",key,c->db->id);
+
+        server.dirty++;
+
+        return;
+    }
+
+
+}
+
+// EXPIRE key seconds
+void expireCommand(redisClient *c) {
+    expireGenericCommand(c,mstime(),UNIT_SECONDS);
+}
+
+// EXPIREAT key timestamp
+void expireatCommand(redisClient *c) {
+    expireGenericCommand(c,0,UNIT_SECONDS);
+}
+
+// PEXPIRE key milliseconds
+void pexpireCommand(redisClient *c) {
+    expireGenericCommand(c,mstime(),UNIT_MILLISECONDS);
+}
+
+// PEXPIREAT key milliseconds-timestamp
+void pexpireatCommand(redisClient *c) {
+    expireGenericCommand(c,0,UNIT_MILLISECONDS);
 }
