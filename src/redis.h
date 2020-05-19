@@ -484,6 +484,8 @@ typedef struct zset {
 
 } zset;
 
+#include "rdb.h"
+
 // 表示开区间/闭区间范围的结构
 typedef struct 
 {
