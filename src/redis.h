@@ -353,6 +353,7 @@ struct redisServer {
     struct saveparam *saveparam;
     int saveparamslen;
     char *rdb_filename;
+    int rdb_compression; /* 是否开启 RDB 文件压缩 */
 
     // 最后一次完成 SAVE 的时间
     time_t lastsave;

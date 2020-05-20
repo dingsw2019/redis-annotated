@@ -214,3 +214,311 @@ robj *rdbLoadIntegerObject(rio *rdb, int enctype, int encode) {
         return createObject(REDIS_STRING,sdsfromlonglong(val));
     }
 }
+
+/**
+ * 字符串对象存储的是整数，将其转换成整数格式保存到 rdb 文件
+ * 
+ * 转换成功, 返回保存整数所需字节数
+ * 转换失败, 返回 0
+ */
+int rdbTryIntegerEncoding(char *s, size_t len, unsigned char *enc) {
+    long long value;
+    char *endptr, buf[32];
+
+    // 尝试将值转换成整数
+    value = strtoll(s, &endptr, 10);
+    if (endptr[0] != '\0') return 0;
+
+    // 将整数再转回字符串
+    ll2string(buf,sizeof(buf),value);
+
+    // 比对两次转换的字符串和传入的字符串内容是否一致
+    // 如果不一样, 转换失败
+    if (strlen(buf) != len || memcmp(s,buf,len)) return 0;
+
+    // 转换成功, 对整数进行编码
+    return rdbEncodeInteger(value,enc);
+}
+
+/**
+ * 尝试对字符串 s 进行压缩后写入 rdb 文件
+ * 写入成功, 返回存入字符串所需字节数
+ * 压缩失败, 返回 0
+ * 写入失败, 返回 -1
+ */
+int rdbSaveLzfStringObject(rio *rdb, unsigned char *s, size_t len) {
+    size_t comprlen, outlen;
+    unsigned char byte;
+    int n, nwritten = 0;
+    void *out;
+
+    // 压缩字符串
+    if (len <= 4) return 0;
+    outlen = len-4;
+    if ((out = zmalloc(outlen+1)) == NULL) return 0;
+    comprlen = lzf_compress(s,len,out,outlen);
+    if (comprlen == 0) {
+        zfree(out);
+        return 0;
+    }
+
+    // 写入压缩方式
+    byte = (REDIS_RDB_ENCVAL<<6)|REDIS_RDB_ENC_LZF;
+    if ((n = rdbWriteRaw(rdb,&byte,1)) == -1) goto writeerr;
+    nwritten += n;
+
+    // 写入压缩后长度
+    if ((n = rdbSaveLen(rdb,comprlen)) == -1) goto writeerr;
+    nwritten += n;
+
+    // 写入原字符串长度
+    if ((n = rdbSaveLen(rdb,len)) == -1) goto writeerr;
+    nwritten += n;
+
+    // 写入压缩后的内容
+    if ((n = rdbWriteRaw(rdb,out,comprlen)) == -1) goto writeerr;
+    nwritten += n;
+
+    zfree(out);
+
+    return nwritten;
+
+writeerr:
+    zfree(out);
+    return -1;
+}
+
+/**
+ * 载入被 LZF 压缩的字符串, 将其写入字符串对象并返回
+ */
+robj *rdbLoadLzfStringObject(rio *rdb) {
+    unsigned int len, clen;
+    unsigned char *c = NULL;
+    sds val = NULL;
+
+    // 读入压缩后的长度
+    if ((clen = rdbLoadLen(rdb,NULL)) == REDIS_RDB_LENERR) return NULL;
+
+    // 读入压缩前字符串的长度
+    if ((len = rdbLoadLen(rdb,NULL)) == REDIS_RDB_LENERR) return NULL;
+
+    // 读取压缩内容
+    if ((c = zmalloc(clen)) == NULL) goto err;
+    if (rioRead(rdb,c,clen) == 0) goto err;
+
+    // 创建 sds
+    if ((val = sdsnewlen(NULL,len)) == NULL) goto err;
+
+    // 解压缩, 得到字符串
+    if (lzf_decompress(c,clen,val,len) == 0) goto err;
+    zfree(c);
+
+    // 创建字符串对象
+    return createObject(REDIS_STRING,val);
+
+err:
+    zfree(c);
+    sdsfree(val);
+    return NULL;
+}
+
+/**
+ * 将字符串写入 rdb 文件
+ * 1. 内容为整数, 转成整数后存储
+ * 2. 长度大于20, 压缩后存储
+ * 3. 长度小于等于20, 直接存了
+ * 
+ * 返回保存字符串所需字节数
+ */
+int rdbSaveRawString(rio *rdb, unsigned char *s, size_t len) {
+    int enclen;
+    int n, nwritten = 0;
+
+    // 整数存入
+    if (len <= 11) {
+        unsigned char buf[5];
+        if ((enclen = rdbTryIntegerEncoding(s,len,buf)) > 0) {
+            // 整数转换成功, 写入
+            if (rdbWriteRaw(rdb,buf,enclen) == -1) return -1;
+            return enclen;
+        }
+    }
+
+    // 压缩存入
+    if (server.rdb_compression && len > 20) {
+        n = rdbSaveLzfStringObject(rdb,s,len);
+
+        if (n == -1) return -1;
+        if (n > 0) return n;
+    }
+
+    // 原样存入
+    // 写入长度
+    if((n = rdbSaveLen(rdb,len)) == -1) return -1;
+    nwritten += n;
+    // 写入内容
+    if (len > 0) {
+        if (rdbWriteRaw(rdb,s,len) == -1) return -1;
+        nwritten += len;
+    }
+
+    return nwritten;
+}
+
+/**
+ * 将整数转换成字符串, 并存入 rdb
+ * 1. 优先可编码的字符串, 空间占用小
+ * 2. 直接将整数转换成字符串
+ * 
+ * 返回字符串所需字节数
+ */
+int rdbSaveLongLongAsStringObject(rio *rdb, long long value) {
+    unsigned char buf[32];
+    int n, nwritten;
+
+    // 尝试转换成编码的字符串
+    int enclen = rdbEncodeInteger(value,buf);
+
+    // 编码成功, 直接存储
+    if (enclen > 0) {
+        return rdbWriteRaw(rdb,buf,enclen);
+
+    // 编码失败, 转字符串存储
+    } else {
+        // 转成字符串
+        enclen = ll2string((char*)buf,32,value);
+        redisAssert(enclen < 32);
+        // 写入字符串长度
+        if ((n = rdbSaveLen(rdb,enclen)) == -1) return -1;
+        nwritten += n;
+
+        // 写入字符串
+        if ((n = rdbWriteRaw(rdb,buf,enclen)) == -1) return -1;
+        nwritten += n;
+    }
+
+    return nwritten;
+}
+
+/**
+ * 将字符串对象保存到 rdb 文件
+ * 返回保存到 rdb 文件所需的字节数
+ */
+int rdbSaveStringObject(rio *rdb, robj *obj) {
+
+    // 整数保存
+    if (obj->encoding == REDIS_ENCODING_INT) {
+        return rdbSaveLongLongAsStringObject(rdb,(long)obj->ptr);
+
+    // 字符保存
+    } else {
+        redisAssertWithInfo(NULL,obj,sdsEncodedObject(obj));
+        return rdbSaveRawString(rdb,obj->ptr,sdslen(obj->ptr));
+    }
+}
+
+/**
+ * 从 rdb 中载入一个字符串对象
+ */
+robj *rdbGenericLoadStringObject(rio *rdb, int encode) {
+    int isencoded;
+    uint32_t len;
+    sds val;
+
+    // 长度
+    len = rdbLoadLen(rdb,&isencoded);
+
+    // 特殊编码字符串
+    if (isencoded) {
+        switch(len){
+        // 整数编码
+        case REDIS_RDB_ENC_INT8:
+        case REDIS_RDB_ENC_INT16:
+        case REDIS_RDB_ENC_INT32:
+            return rdbLoadIntegerObject(rdb,len,encode);
+        
+        // LZF 压缩
+        case REDIS_RDB_ENC_LZF:
+            return rdbLoadLzfStringObject(rdb);
+
+        default:
+            redisPanic("Unknown RDB encoding type");
+        }
+    }
+
+    if (len == REDIS_RDB_LENERR) return NULL;
+
+    // 执行到这里, 说明字符串既没有被压缩, 也不是整数
+    val = sdsnewlen(NULL,len);
+    if (len && rioRead(rdb,val,len) == 0) {
+        sdsfree(val);
+        return NULL;
+    }
+
+    return createObject(REDIS_STRING,val);
+}
+
+robj *rdbLoadStringObject(rio *rdb) {
+    rdbGenericLoadStringObject(rdb,0);
+}
+robj *rdbLoadEncodedStringObject(rio *rdb) {
+    rdbGenericLoadStringObject(rdb,1);
+}
+
+/**
+ * 以字符串来保存双精度浮点数, 写入 rdb
+ * 字符串的前 8 位为无符号整数值, 指定浮点数的长度
+ * 但有以下特殊值, 做特殊情况处理
+ * 253: 不是数字
+ * 254：正无穷
+ * 255：负无穷
+ */
+int rdbSaveDoubleValue(rio *rdb, double val) {
+    unsigned char buf[128];
+    int len;
+
+    // 不是数字
+    if (isnan(val)) {
+        buf[0] = 253;
+        len = 1;
+
+    // 无穷
+    } else if (!isfinite(val)) {
+        buf[0] = (val < 0) ? 255 : 254;
+        len = 1;
+
+    // 浮点数转成字符串
+    } else {
+        snprintf((char*)buf+1,sizeof(buf)-1,"%.17g",val);
+        buf[0] = strlen((char*)buf+1);
+        len = buf[0]+1;
+    }
+
+    return rdbWriteRaw(rdb,buf,len);
+}
+
+/**
+ * 载入字符串表示的双精度浮点数, 将值写入 val 中
+ * 读取错误, 返回 -1
+ * 成功, 返回 0
+ */
+int rdbLoadDoubleValue(rio *rdb, double *val) {
+    char buf[256];
+    unsigned char len;
+
+    // 载入字符串长度
+    if (rioRead(rdb,&len,1) == 0) return -1;
+
+    switch(len){
+    // 特殊值
+    case 255: *val = R_NegInf; return 0;
+    case 254: *val = R_PosInf; return 0;
+    case 253: *val = R_Nan; return 0;
+    // 载入字符串
+    default:
+        if (rioRead(rdb,buf,len) == 0) return -1;
+        buf[len] = '\0';
+        sscanf(buf,"lg",val);
+        return 0;
+    }
+}
