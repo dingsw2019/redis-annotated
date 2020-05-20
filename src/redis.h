@@ -207,6 +207,13 @@ typedef struct {
 // #define LRU_CLOCK() ((1000/server.hz <= REDIS_LRU_CLOCK_RESOLUTION) ? server.lruclock : getLRUClock())
 #define LRU_CLOCK() (getLRUClock())
 
+#define initStaticStringObject(_var,_ptr) do { \
+    _var.refcount = 1; \
+    _var.type = REDIS_STRING; \
+    _var.encoding = REDIS_ENCODING_RAW; \
+    _var.ptr = _ptr; \
+} while(0);
+
 typedef struct redisDb {
 
     // 数据库键空间, 保存所有键值对
@@ -316,6 +323,16 @@ struct redisServer {
     // 值为真时, 表示服务器正在进行载入
     int loading;
 
+    // 正在载入的数据的大小
+    off_t loading_total_bytes;
+
+    // 已载入数据的大小
+    off_t loading_loaded_bytes;
+
+    // 开始进行载入的时间
+    time_t loading_start_time;
+    off_t loading_process_events_interval_bytes;
+
     // 当前正在执行 EVAL 命令的客户端, 如果没有就是 NULL
     redisClient *lua_caller;
 
@@ -340,23 +357,44 @@ struct redisServer {
 
     // 查找键失败的次数
     long long stat_keyspace_misses;
+
+    // 已使用内存峰值
+    size_t stat_peak_memory;
+
+    // 最后一次执行 fork() 时消耗的时间
+    long long stat_fork_time;
     
     /* AOF */
     // 负责进行 AOF 重写的子进程 ID
     pid_t aof_child_pid;
 
+    // BGSAVE 执行前的数据库被修改次数
+    long long dirty_before_bgsave;
+
     /* RDB */
     // 负责执行 BGSAVE 的子进程的 ID
     // 没在执行 BGSAVE 时, 设为 -1
     pid_t rdb_child_pid;
-
     struct saveparam *saveparam;
     int saveparamslen;
     char *rdb_filename;
     int rdb_compression; /* 是否开启 RDB 文件压缩 */
+    int rdb_checksum; /* 是否开启 RDB 文件校验 */
 
     // 最后一次完成 SAVE 的时间
     time_t lastsave;
+
+    // 最后一次尝试执行 BGSAVE 的时间
+    time_t lastbgsave_try;
+
+    // 最近一次 BGSAVE 执行耗费的时间
+    time_t rdb_save_time_last;
+
+    // 数据库最近一次开始执行 BGSAVE 的时间
+    time_t rdb_save_time_start;     
+
+    // 最后一次执行 SAVE 的状态
+    int lastbgsave_status;          /* REDIS_OK or REDIS_ERR */
 
     /* Cluster 集群 */
     int cluster_enabled; // 是否开启集群

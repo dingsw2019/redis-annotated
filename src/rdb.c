@@ -522,3 +522,779 @@ int rdbLoadDoubleValue(rio *rdb, double *val) {
         return 0;
     }
 }
+
+/**
+ * 将对象的类型写入 rdb
+ * 写入成功, 返回写入字符所需内存长度
+ * 写入失败, 返回 -1
+ */
+int rdbSaveObjectType(rio *rdb, robj *o) {
+    switch (o->type)
+    {
+    case REDIS_STRING:
+        return rdbSaveType(rdb,REDIS_RDB_TYPE_STRING);
+
+    case REDIS_LIST:
+        if (o->encoding == REDIS_ENCODING_ZIPLIST) 
+            return rdbSaveType(rdb,REDIS_RDB_TYPE_LIST_ZIPLIST);
+        else if (o->encoding == REDIS_ENCODING_LINKEDLIST) 
+            return rdbSaveType(rdb,REDIS_RDB_TYPE_LIST);
+        else 
+            redisPanic("Unknown list encoding");
+
+    case REDIS_SET:
+        if (o->encoding == REDIS_ENCODING_INTSET) 
+            return rdbSaveType(rdb,REDIS_RDB_TYPE_SET_INTSET);
+        else if (o->encoding == REDIS_ENCODING_HT) 
+            return rdbSaveType(rdb,REDIS_RDB_TYPE_SET);
+        else 
+            redisPanic("Unknown set encoding");
+
+    case REDIS_ZSET:
+        if (o->encoding == REDIS_ENCODING_ZIPLIST) 
+            return rdbSaveType(rdb,REDIS_RDB_TYPE_ZSET_ZIPLIST);
+        else if (o->encoding == REDIS_ENCODING_SKIPLIST) 
+            return rdbSaveType(rdb,REDIS_RDB_TYPE_ZSET);
+        else 
+            redisPanic("Unknown sorted set encoding");
+
+    case REDIS_HASH:
+        if (o->encoding == REDIS_ENCODING_ZIPLIST) 
+            return rdbSaveType(rdb,REDIS_RDB_TYPE_HASH_ZIPLIST);
+        else if (o->encoding == REDIS_ENCODING_HT) 
+            return rdbSaveType(rdb,REDIS_RDB_TYPE_HASH);
+        else 
+            redisPanic("Unknown hash encoding");
+    
+    default:
+        redisPanic("Unknown object type");
+    }
+
+    return -1;
+}
+
+/**
+ * 载入对象的类型,并返回
+ * 载入失败返回 -1
+ */
+int rdbLoadObjectType(rio *rdb) {
+    int type;
+    if ((type = rdbLoadType(rdb)) == -1) return -1;
+    if (!rdbIsObjectType(type)) return -1;
+
+    return type;
+}
+
+/**
+ * 将给定对象 o 保存到 rdb 文件
+ * 保存成功返回, 保存对象所用的字节数
+ * 保存失败, 返回 0
+ */
+int rdbSaveObject(rio *rdb, robj *o) {
+    int n, nwritten = 0;
+
+    if (o->type == REDIS_STRING) {
+
+        if ((n = rdbSaveStringObject(rdb,o)) == -1) return -1;
+        nwritten += n;
+
+    } else if (o->type == REDIS_LIST) {
+
+        if (o->encoding == REDIS_ENCODING_ZIPLIST)  {
+
+            // 计算长度, 写入 rdb
+            size_t l = ziplistBlobLen((unsigned char*)o->ptr);
+
+            if ((n = rdbSaveRawString(rdb,o->ptr,l)) == -1) return -1;
+            nwritten += n;
+
+        } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
+            list *list = o->ptr;
+            listIter *li;
+            listNode *ln;
+
+            // 写入节点数量
+            if ((n = rdbSaveLen(rdb,listLength(list))) == -1) return -1;
+            nwritten += n;
+
+            // 遍历所有节点, 写入
+            listRewind(list, &li);
+            while ((ln = listNext(&li))) {
+                robj *eleobj = listNodeValue(ln);
+                if ((n = rdbSaveStringObject(rdb,eleobj)) == -1) return -1;
+                nwritten += n;
+            }
+            
+        } else {
+            redisPanic("Unknown list encoding");
+        }
+
+    } else if (o->type == REDIS_SET) {
+
+        if (o->encoding == REDIS_ENCODING_INTSET) {
+            // 计算长度, 写入
+            size_t l = intsetBlobLen((intset*)o->ptr);
+
+            if ((n = rdbSaveRawString(rdb,o->ptr,l)) == -1) return -1;
+            nwritten += n;
+
+        } else if (o->encoding == REDIS_ENCODING_HT) {
+            dict *set = o->ptr;
+            dictIterator *di = dictGetIterator(set);
+            dictEntry *de;
+
+            // 计算长度
+            if ((n = rdbSaveLen(rdb,dictSize(set))) == -1) return -1;
+            nwritten += n;
+
+            // 写入节点
+            while ((de = dictNext(di)) != NULL) {
+                robj *eleobj = dictGetKey(de);
+                // 写入值
+                if ((n = rdbSaveStringObject(rdb,eleobj)) == -1) return -1;
+                nwritten += n;
+            }
+            dictReleaseIterator(di);
+
+        } else {
+           redisPanic("Unknown set encoding");
+        }
+
+    } else if (o->type == REDIS_ZSET) {
+
+        if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+            size_t l = ziplistBlobLen(o->ptr);
+
+            if ((n = rdbSaveRawString(rdb,o->ptr,l)) == -1) return -1;
+            nwritten += n;
+            
+        } else if (o->encoding == REDIS_ENCODING_SKIPLIST) {
+            zset *zs = o->ptr;
+            dictIterator *di = dictGetIterator(zs->dict);
+            dictEntry *de;
+
+            if ((n = rdbSaveLen(rdb,dictSize(zs->dict)) == -1)) return -1;
+            nwritten += n;
+            
+            while ((de = dictNext(di)) != NULL) {
+                robj *eleobj = dictGetKey(de);
+                double *score = dictGetVal(de);
+
+                // 写入成员
+                if ((n = rdbSaveStringObject(rdb,eleobj)) == -1) return -1;
+                nwritten += n;
+
+                // 写入分值
+                if ((n = rdbSaveDoubleValue(rdb,*score)) == -1) return -1;
+                nwritten += n;
+            }
+            dictReleaseIterator(di);
+
+        } else {
+           redisPanic("Unknown sorted set encoding");
+        }
+
+    } else if (o->type == REDIS_HASH) {
+
+        if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+            size_t l = ziplistBlobLen(o->ptr);
+
+            if ((n = rdbSaveRawString(rdb,o->ptr,l)) == -1) return -1;
+            nwritten += n;
+
+        } else if (o->encoding == REDIS_ENCODING_HT) {
+            dictIterator *di = dictGetIterator(d);
+            dictEntry *de;
+
+            // 计算长度
+            if ((n = rdbSaveLen(rdb,dictSize((dict*)o->ptr))) == -1) return -1;
+            nwritten += n;
+
+            // 写入节点
+            while ((de = dictNext(di)) != NULL) {
+                robj *key = dictGetKey(de);
+                robj *val = dictGetVal(de);
+                // 写入键
+                if ((n = rdbSaveStringObject(rdb,key)) == -1) return -1;
+                nwritten += n;
+
+                // 写入值
+                if ((n = rdbSaveStringObject(rdb,val)) == -1) return -1;
+                nwritten += n;
+            }
+            dictReleaseIterator(di);
+        } else {
+           redisPanic("Unknown hash encoding");
+        }
+    
+    } else {
+
+        redisPanic("Unknown object type");
+    }
+    
+    return nwritten;
+}
+
+/**
+ * 写入完整的键值对到 rdb
+ * 写入包含：键、值、过期时间、类型
+ * 写入成功返回 1, 当键已过期时, 返回 0
+ * 写入出错, 返回 -1
+ */
+int rdbSaveKeyValuePair(rio *rdb, robj *key, robj *val,
+                        long long expiretime, long long now)
+{
+    // 保存过期时间
+    if (expiretime != -1) {
+
+        if (expiretime < now) return 0;
+
+        if (rdbSaveType(rdb,REDIS_RDB_OPCODE_EXPIRETIME_MS) == -1) return -1;
+        if (rdbSaveMillisecondTime(rdb,expiretime) == -1) return -1;
+    }
+
+    // 保存类型，键，值
+    if (rdbSaveObjectType(rdb,val) == -1) return -1;
+    if (rdbSaveStringObject(rdb,key) == -1) return -1;
+    if (rdbSaveObject(rdb,val) == -1) return -1;
+
+    return 1;
+}
+
+/**
+ * 将数据库保存到磁盘
+ * 保存成功返回 REDIS_OK, 出错或失败返回 REDIS_ERR
+ */
+int rdbSave(char *filename) {
+    dictIterator *di = NULL;
+    dictEntry *de;
+    char tmpfile[265];
+    char magic[10];
+    int j;
+    long long now = mstime();
+    FILE *fp;
+    rio rdb;
+    uint64_t cksum;
+
+    // 创建临时文件
+    snprintf(tmpfile,256,"temp-%d.rdb",(int)getpid());
+    fp = fopen(tmpfile,"w");
+    if (!fp) {
+        redisLog(REDIS_WARNING, "Failed opening .rdb for saving: %s",
+            strerror(errno));
+        return REDIS_ERR;
+    }
+
+    // 初始化 I/O
+    rioInitWithFile(&rdb,fp);
+
+    // 设置校验和函数
+    if (server.rdb_checksum)
+        rdb.update_cksum = rioGenericUpdateChecksum;
+
+    // 写入 起始位 和 RDB 版本号
+    snprintf(magic,sizeof(magic),"REDIS%04d",REDIS_RDB_VERSION);
+    // 遍历所有数据库
+    for (j = 0; j < server.dbnum; j++) {
+
+        // 要迭代的数据库
+        redisDb *db = server.db+j;
+
+        // 数据库的键空间
+        dict *d = db->dict;
+
+        // 跳过空数据库
+        if (dictSize(d) == 0) continue;
+
+        // 创建键空间迭代器
+        di = dictGetIterator(d);
+        if (!di) {
+            fclose(fp);
+            return REDIS_ERR;
+        }
+        
+        // 写入数据库标识位
+        if (rdbSaveType(&rdb,REDIS_RDB_OPCODE_SELECTDB) == -1) goto werr;
+
+        // 写入数据库索引号
+        if (rdbSaveLen(&rdb,j) == -1) goto werr;
+
+        while ((de = dictNext(di)) != NULL) {
+            sds keystr = dictGetKey(de);
+            robj *key, *o = dictGetVal(de);
+            long long expire;
+
+            // 在栈中创建一个 key 对象
+            initStaticStringObject(key,keystr);
+
+            // 获取过期时间
+            expire = getExpire(db,&key);
+
+            // 添加键值对
+            if (rdbSaveKeyValuePair(&rdb,&key,o,expire,now) == -1) goto werr;
+        }
+        dictReleaseIterator(di);
+    }
+    di = NULL;
+
+    // 添加结束位
+    if (rdbSaveType(&rdb,REDIS_RDB_OPCODE_EOF) == -1) goto werr;
+
+    // 添加校验和
+    cksum = rdb.cksum;
+    memrev64ifbe(&cksum);
+    rioWrite(&rdb,&cksum,8);
+    
+    // 刷缓存, 确保数据写入磁盘
+    if (fflush(fp) == EOF) goto werr;
+    if (fsync(fileno(fp)) == -1) goto werr;
+    if (fclose(fp) == EOF) goto werr;
+
+    // 更新文件名
+    if (rename(tmpfile,filename) == -1) {
+        redisLog(REDIS_WARNING,"Error moving temp DB file on the final destination: %s", strerror(errno));
+        unlink(tmpfile);
+        return REDIS_ERR;
+    }
+
+    // RDB 写入完成的日志
+    redisLog(REDIS_NOTICE, "DB saved on disk");
+
+    // 清零数据库脏状态
+    server.dirty = 0;
+
+    // 记录最后一次完成 save 时间
+    server.lastsave = time(NULL);
+
+    // 记录最后一次执行 save 的状态
+    server.lastbgsave_status = REDIS_OK;
+
+    return REDIS_OK;
+
+werr:
+    // 关闭文件
+    fclose(fp);
+    // 删除文件
+    unlink(tmpfile);
+
+    redisLog(REDIS_WARNING,"Write error saving DB on disk: %s", strerror(errno));
+
+    if (di) dictReleaseIterator(di);
+
+    return REDIS_ERR;
+}
+
+// bgsave
+int rdbSaveBackground(char *filename) {
+    pid_t childpid;
+    long long start;
+
+    // bgsave 正在执行, 直接 返回
+    if (server.rdb_child_pid != -1) return REDIS_ERR;
+
+    // 记录 bgsave 执行前数据库键改次数
+    server.dirty_before_bgsave = server.dirty;
+
+    // 记录最近一次尝试执行 bgsave 的时间
+    server.lastbgsave_try = time(NULL);
+
+    // fork 开始时间, 记录 fork 耗时
+    start = ustime();
+
+    if ((childpid = fork()) == 0) {
+        // Child
+        int retval;
+
+        // 关闭网络连接 fd
+        clostListeningSockets(0);
+
+        // 设置进程的标题, 方便识别
+        redisSetProcTitle("redis-rdb-bgsave");
+
+        // 执行保存操作
+        retval = rdbSave(filename);
+
+        // 打印 copy-on-write 时使用的内存数
+        if (retval == REDIS_OK) {
+            size_t private_dirty = zmalloc_get_private_dirty();
+
+            if (private_dirty) {
+                redisLog(REDIS_NOTICE,
+                    "RDB: %zu MB of memory used by copy-on-write",
+                    private_dirty/(1024*1024));
+            }
+        }
+
+        // 向父进程发送信号
+        exitFromChild((retval == REDIS_OK) ? 0 : 1);
+
+    } else {
+        // Parent
+        // 计算 fork 耗时
+        server.stat_fork_time = ustime()-start;
+
+        // fork 出错, 退出
+        if (childpid == -1) {
+            server.lastbgsave_status = REDIS_ERR;
+            redisLog(REDIS_WARNING,"Can't save in background: fork: %s",
+                strerror(errno));
+            return REDIS_ERR;
+        }
+
+        // 打印 bgsave 开始日志
+        redisLog(REDIS_NOTICE,"Background saving started by pid %d",childpid);
+
+        // 记录数据库开始 bgsave 的时间
+        server.rdb_save_time_start = time(NULL);
+
+        // 记录负责执行 bgsave 的子进程 ID
+        server.rdb_child_pid = childpid;
+
+        // 关闭自动 rehash
+        updateDictResizePolicy();
+
+        return REDIS_OK;
+    }
+
+    return REDIS_OK;
+}
+
+/**
+ * 溢出 bgsave 产生的临时文件
+ * bgsave 执行被中断时使用
+ */
+void rdbRemoveTempFile(pid_t childpid) {
+    char tmpfile[256];
+
+    snprintf(tmpfile,256,"temp-%d.rdb",(int)childpid);
+    unlink(tmpfile);
+}
+
+/**
+ * 从 rdb 文件中载入指定类型的对象
+ * 读取成功返回对象, 否则返回 NULL
+ */
+robj *rdbLoadObject(int rdbtype, rio *rdb) {
+    robj *o, *ele, *dec;
+    size_t len;
+    unsigned int i;
+
+    if (rdbtype == REDIS_RDB_TYPE_STRING) {
+        if ((o = rdbLoadEncodedStringObject(rdb)) == NULL) return NULL;
+        o = tryObjectEncoding(o);
+
+    } else if (rdbtype == REDIS_RDB_TYPE_LIST) {
+        // 读取列表节点数
+        if ((len = rdbLoadLen(rdb,NULL)) == REDIS_RDB_LENERR) return NULL;
+
+        // 创建对象
+        if (len > server.list_max_ziplist_entries)
+            o = createListObject();
+        else
+            o = createZiplistObject();
+
+        // 添加节点
+        while (len--) {
+            // 载入字符串对象
+            if ((ele = rdbLoadEncodedStringObject(rdb)) == NULL) return NULL;
+
+            // 对象转码
+            if (o->encoding == REDIS_ENCODING_ZIPLIST &&
+                sdsEncodedObject(ele) &&
+                sdslen(ele) > server.list_max_ziplist_value)
+                    listTypeConvert(o,REDIS_ENCODING_LINKEDLIST);
+
+            // 添加节点
+            if (o->encoding == REDIS_ENCODING_ZIPLIST) {
+                dec = getDecodedObject(ele);
+
+                o->ptr = ziplistPush(o->ptr,dec->ptr,sdslen(dec->ptr),ZIPLIST_TAIL);
+
+                decrRefCount(dec);
+                decrRefCount(ele);
+
+            } else {
+                ele = tryObjectEncoding(ele);
+                listAddNodeTail(o->ptr,ele);
+            }
+        }
+
+    } else if (rdbtype == REDIS_RDB_TYPE_SET) {
+        // 获取节点数量
+        if ((len = rdbLoadLen(rdb,NULL)) == REDIS_RDB_LENERR) return NULL;
+
+        // 创建集合对象
+        if (len > server.set_max_intset_entries) {
+            o = createSetObject();
+
+            if (len > DICT_HT_INITIAL_SIZE)
+                dictExpand(o->ptr,len);
+        } else {
+            o = createIntsetObject();
+        }
+
+        // 添加节点
+        for (i = 0; i < len; i++) {
+            long long llval;
+
+            // 载入节点
+            if ((ele = rdbLoadEncodedStringObject(rdb)) == NULL) return NULL;
+            ele = tryObjectEncoding(ele);
+
+            if (o->encoding == REDIS_ENCODING_INTSET) {
+                if (isObjectRepresentableAsLongLong(ele,&llval) == REDIS_OK) {
+                    intsetAdd(o->ptr,llval,NULL);
+                } else {
+                    setTypeConvert(o,REDIS_ENCODING_HT);
+                    dictExpand(o->ptr,len);
+                }
+            } 
+
+            if (o->encoding == REDIS_ENCODING_HT) {
+                dictAdd((dict*)o->ptr,ele,NULL);
+            } else {
+                decrRefCount(ele);
+            }
+        }
+        
+    } else if (rdbtype == REDIS_RDB_TYPE_ZSET) {
+        size_t zsetlen;
+        size_t maxelelen = 0;
+        zset *zs;
+
+        // 载入节点数量
+        if ((zsetlen = rdbLoadLen(rdb,NULL)) == REDIS_RDB_LENERR) return NULL;
+
+        // 创建有序集合
+        o = createZsetObject();
+        zs = o->ptr;
+
+        // 添加节点
+        while (zsetlen--) {
+            robj *ele;
+            double score;
+            zskiplistNode *znode;
+
+            // 载入元素成员
+            if ((ele = rdbLoadEncodedStringObject(rdb)) == NULL) return NULL;
+            ele = tryObjectEncoding(ele);
+
+            // 载入元素分值
+            if (rdbLoadDoubleValue(rdb,&score) == -1) return NULL;
+
+            // 记录成员的最大长度
+            if (sdsEncodedObject(ele) && sdslen(ele->ptr) > maxelelen)
+                maxelelen = sdslen(ele->ptr);
+
+            // 将元素插入到跳跃表
+            znode = zslInsert(zs->zsl,score,ele);
+
+            // 元素添加到字典
+            dictAdd(zs->dict,ele,&znode->score);
+
+            incrRefCount(ele);
+
+            if (zsetLength(o) <= server.zset_max_ziplist_entries &&
+                maxelelen <= server.zset_max_ziplist_value)
+                    zsetConvert(o,REDIS_ENCODING_ZIPLIST);
+        }
+
+    } else if (rdbtype == REDIS_RDB_TYPE_HASH) {
+        size_t len;
+        int ret;
+
+        // 节点数量
+        if ((len = rdbLoadLen(rdb,NULL)) == REDIS_RDB_LENERR) return NULL;
+
+        // 创建哈希表
+        o = createHashObject();
+
+        if (len > server.list_max_ziplist_entries)
+            hashTypeConvert(o,REDIS_ENCODING_HT);
+
+        // 添加节点
+        while (o->encoding == REDIS_ENCODING_ZIPLIST && len > 0) {
+            robj *field, *value;
+            len--;
+
+            // 载入域
+            field = rdbLoadStringObject(rdb);
+            if (field == NULL) return NULL;
+            redisAssert(sdsEncodedObject(field));
+
+            // 载入值
+            value = rdbLoadStringObject(rdb);
+            if (value == NULL) return NULL;
+            redisAssert(sdsEncodedObject(value));
+
+            // 添加域和值
+            o->ptr = ziplistPush(o->ptr,field->ptr,sdslen(field->ptr),ZIPLIST_TAIL);
+            o->ptr = ziplistPush(o->ptr,value->ptr,sdslen(value->ptr),ZIPLIST_TAIL);
+
+            // 是否转码
+            if (sdslen(field->ptr) > server.hash_max_ziplist_value ||
+                sdslen(value->ptr) > server.hash_max_ziplist_value)
+            {
+                decrRefCount(field);
+                decrRefCount(value);
+                hashTypeConvert(o, REDIS_ENCODING_HT);
+                break;
+            }
+            decrRefCount(field);
+            decrRefCount(value);
+        }
+
+        while (o->encoding == REDIS_ENCODING_HT && len > 0) {
+            robj *field, *value;
+            len--;
+
+            field = rdbLoadEncodedStringObject(rdb);
+            if (field == NULL) return NULL;
+            value = rdbLoadEncodedStringObject(rdb);
+            if (value == NULL) return NULL;
+
+            field = tryObjectEncoding(field);
+            value = tryObjectEncoding(value);
+
+            ret = dictAdd((dict*)o->ptr,field, value);
+            redisAssert(ret == REDIS_OK);
+        }
+
+        redisAssert(len == 0);
+
+    } else if (rdbtype == REDIS_RDB_TYPE_HASH_ZIPMAP  ||
+               rdbtype == REDIS_RDB_TYPE_LIST_ZIPLIST ||
+               rdbtype == REDIS_RDB_TYPE_SET_INTSET   ||
+               rdbtype == REDIS_RDB_TYPE_ZSET_ZIPLIST ||
+               rdbtype == REDIS_RDB_TYPE_HASH_ZIPLIST)) 
+    {
+
+        // 载入字符串对象
+        robj *aux = rdbLoadStringObject(rdb);
+        if (aux == NULL) return NULL;
+        o = createObject(REDIS_STRING,NULL);
+        o->ptr = zmalloc(sdslen(aux->ptr));
+        memcpy(o->ptr,aux->ptr,sdslen(aux->ptr));
+        decrRefCount(aux);
+        
+        // 载入值对象
+        switch(rdbtype) {
+        case REDIS_RDB_TYPE_HASH_ZIPMAP:
+            {
+                // 创建 ZIPLIST
+                unsigned char *zl = ziplistNew();
+                unsigned char *zi = zipmapRewind(o->ptr);
+                unsigned char *fstr, *vstr;
+                unsigned int flen, vlen;
+                unsigned int maxlen = 0;
+
+                // 从 2.6 开始， HASH 不再使用 ZIPMAP 来进行编码
+                // 所以遇到 ZIPMAP 编码的值时，要将它转换为 ZIPLIST
+
+                // 从字符串中取出 ZIPMAP 的域和值，然后推入到 ZIPLIST 中
+                while ((zi = zipmapNext(zi, &fstr, &flen, &vstr, &vlen)) != NULL) {
+                    if (flen > maxlen) maxlen = flen;
+                    if (vlen > maxlen) maxlen = vlen;
+                    zl = ziplistPush(zl, fstr, flen, ZIPLIST_TAIL);
+                    zl = ziplistPush(zl, vstr, vlen, ZIPLIST_TAIL);
+                }
+
+                zfree(o->ptr);
+
+                // 设置类型、编码和值指针
+                o->ptr = zl;
+                o->type = REDIS_HASH;
+                o->encoding = REDIS_ENCODING_ZIPLIST;
+
+                // 是否需要从 ZIPLIST 编码转换为 HT 编码
+                if (hashTypeLength(o) > server.hash_max_ziplist_entries ||
+                    maxlen > server.hash_max_ziplist_value)
+                {
+                    hashTypeConvert(o, REDIS_ENCODING_HT);
+                }
+            }
+            break;
+        
+        // ziplist 编码的列表
+        case REDIS_RDB_TYPE_LIST_ZIPLIST:
+            o->type = REDIS_LIST;
+            o->encoding = REDIS_ENCODING_ZIPLIST;
+            // 检查是否需要转换编码
+            if (ziplistLen(o->ptr) > server.list_max_ziplist_entries)
+                listTypeConvert(o,REDIS_ENCODING_LINKEDLIST);
+            break;
+
+        // intset 编码的集合
+        case REDIS_RDB_TYPE_SET_INTSET:
+            o->type = REDIS_SET;
+            o->encoding = REDIS_ENCODING_INTSET;
+            // 转换编码
+            if (intsetLen(o->ptr) > server.set_max_intset_entries)
+                setTypeConvert(o,REDIS_ENCODING_HT);
+            break;
+
+        // ziplist 编码的有序集合
+        case REDIS_RDB_TYPE_ZSET_ZIPLIST:
+            o->type = REDIS_ZSET;
+            o->encoding = REDIS_ENCODING_ZIPLIST;
+            // 检查是否需要转换编码
+            if (ziplistLen(o->ptr) > server.zset_max_ziplist_entries)
+                zsetConvert(o,REDIS_ENCODING_SKIPLIST);
+            break;
+
+        // ziplist 编码的哈希表
+        case REDIS_RDB_TYPE_HASH_ZIPLIST:
+            o->type = REDIS_HASH;
+            o->encoding = REDIS_ENCODING_ZIPLIST;
+            // 检查是否需要转换编码
+            if (hashTypeLength(o) > server.hash_max_ziplist_entries)
+                listTypeConvert(o,REDIS_ENCODING_HT);
+            break;
+
+        default:
+            redisPanic("Unknown encoding");
+            break;
+        }
+
+    } else {
+        redisPanic("Unknown object type");
+    }
+
+    return o;
+}
+
+/**
+ * 在全局状态中标记程序正在进行载入
+ * 并设置相应的载入状态
+ */
+void startLoading(FILE *fp) {
+    struct stat sb;
+
+    server.loading = 1;
+
+    // 开始进行载入的时间
+    server.loading_start_time = time(NULL);
+
+    // 文件的大小
+    if (fstat(fileno(fp),&sb) == -1) {
+        server.loading_total_bytes = 1;
+    } else {
+        server.loading_total_bytes = sb.st_size;
+    }
+}
+
+/**
+ * 刷新载入进度信息
+ */
+void loadingProgress(off_t pos) {
+    server.loading_loaded_bytes = pos;
+    if (server.stat_peak_memory < zmalloc_used_memory())
+        server.stat_peak_memory = zmalloc_used_memory();
+}
+
+/**
+ * 关闭服务器载入状态
+ */
+void stopLoading(void) {
+    server.loading = 0;
+}

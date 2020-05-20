@@ -103,3 +103,10 @@ long long mstime(void) {
 unsigned int getLRUClock(void) {
     return (mstime()/REDIS_LRU_CLOCK_RESOLUTION) & REDIS_LRU_CLOCK_MAX;
 }
+
+void updateDictResizePolicy(void) {
+    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1)
+        dictEnableResize();
+    else
+        dictDisableResize();
+}
