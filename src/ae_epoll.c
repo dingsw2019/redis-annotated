@@ -1,3 +1,9 @@
+/**
+ * 
+ * epoll_create, 创建一个白板
+ * epoll_ctl, 构建 fd 与 event 关系, 并添加到 eptr
+ * epoll_wait, 阻塞检查 eptr 是否存在就绪 fd, 如存在,返回就绪 fd 的数量
+ */
 #include <sys/epoll.h>
 #include <ae.h>
 

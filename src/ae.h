@@ -1,5 +1,27 @@
 
+#ifndef __AE_H__
+#define __AE_H__
 
+// 事件执行状态
+#define AE_OK 0
+#define AE_ERR -1
+
+// 文件事件状态
+#define AE_NONE 0   //未设置
+#define AE_READABLE 1   // 可读
+#define AE_WRITABLE 2   // 可写
+
+// 事件处理器的执行
+#define AE_FILE_EVENTS 1
+#define AE_TIME_EVENTS 2
+#define AE_ALL_EVENTS (AE_FILE_EVENTS|AE_TIME_EVENTS)
+// 不阻塞, 也不等待
+#define AE_DONT_WAIT 4
+
+// 决定时间事件是否要持续执行的 flag
+#define AE_NOMORE -1
+
+#define AE_NOTUSED(V) ((void) V)
 
 /**
  * 事件处理器状态
@@ -102,7 +124,8 @@ typedef struct aeEventLoop {
 
     // 处理事件前要执行的函数
     aeBeforeSleepProc *beforesleep;
-    
+
 } aeEventLoop;
 
 
+#endif
