@@ -7,6 +7,7 @@
 #include <sys/epoll.h>
 #include <ae.h>
 
+
 typedef struct aeApiState {
     
     // 实例描述符
@@ -57,7 +58,6 @@ static int aeApiResize(aeEventLoop *eventLoop, int setsize) {
     state->events = zrealloc(state->events,sizeof(struct epoll_event)*eventLoop->setsize);
     return 0;
 }
-
 
 
 /**
