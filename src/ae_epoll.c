@@ -7,7 +7,6 @@
 #include <sys/epoll.h>
 #include <ae.h>
 
-
 typedef struct aeApiState {
     
     // 实例描述符
